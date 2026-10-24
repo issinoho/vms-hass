@@ -42,3 +42,34 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
   and its entities from HA's registry (checked with the device list and an entity search).
 - Not yet exercised: the last will (the probe always disconnects cleanly) and TLS on
   8883. Both belong in the Phase 1 tests.
+
+## 3. HA and the Phase 1 agent (2026-10-24)
+
+- **HA refuses `expire_after` at the top level of a device-discovery message.** It
+  logged `Invalid MQTT device discovery payload for vmshass_test_stub, not a valid
+  option at 'expire_after'` and created no entities. The broker had accepted the
+  message, so only a live HA could catch this. Moved into each component; a unit test
+  now checks for it.
+- With it fixed, HA created the device with 29 entities: 23 enabled and the 6 meant
+  to be disabled by default. Units, device classes, the serial number (system ID) and
+  `hw_version` (architecture) were as sent.
+- **`kill -9` makes the device unavailable at once**, not after 1.5 × keepalive: the
+  kernel closes the socket, so the broker sees the drop and publishes the will at
+  the same instant (22:05:37.6 for both). The keepalive limit is for silent failures,
+  such as a node that stops dead; the local tests cover that path.
+- On reconnect, the disk sensors (retained state) returned at once and the CPU 5 s
+  later, after the second sample (`HA_FIRST_INTERVAL_MS`).
+- **Removing a device with disabled entities logs a warning** per disabled entity:
+  `No device components to cleanup for vmshass_test_stub, node_id 'None'` (count 6).
+  HA never loaded them, so there was nothing to unload. The device and all 29
+  entities were removed. Harmless; noted so it isn't mistaken for a fault.
+
+## 4. Local test tools (2026-10-24)
+
+- No Docker on the workstation and no Mosquitto installed. `tools/mosquitto.sh`
+  unpacks Ubuntu's mosquitto 2.0.22 packages (plus libdlt3 and libwebsockets19t64)
+  into `build/mosq/root`, so the integration tests need no root and change nothing
+  system-wide.
+- Mosquitto 2 logs `Client <id> disconnected.` for a DISCONNECT, and something else
+  for a timeout or a dropped socket; the integration test uses that line to tell an
+  orderly stop from a crash.

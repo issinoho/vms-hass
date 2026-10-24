@@ -107,7 +107,9 @@ before that.
 - Tests: unit tests for the encoder; an integration test against a local Mosquitto
   (`mosquitto_sub` checks the bytes and the retained flags; broker restarts and
   dropped connections); the discovery JSON checked against HA's schema.
-- Exit: the Linux build publishes a fake node that a test HA (a container) discovers.
+- Exit: the Linux build publishes a fake node that a test HA discovers. (Done on the
+  user's HA with a test device, removed afterwards: there is no container runtime on
+  the workstation. See docs/PHASE1.md.)
 
 ### Phase 2: the VMS agent
 

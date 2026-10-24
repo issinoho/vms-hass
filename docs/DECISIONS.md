@@ -64,3 +64,49 @@ to `ha_`. Their behaviour on both architectures is already tested, including the
 Alternative: a shared library repository used by both. Cleaner in the long run, but it
 adds a build dependency and a release step to beszel for a project that does not exist
 yet. Revisit if a third project needs the same code.
+
+## D5. Node ID: node name and system ID, saved on first run
+
+**Status:** proposed (Phase 1).
+
+The node ID names the HA device (`dev.ids`), the topics and every `unique_id`, so it
+must never change (CLAUDE.md). On first run it is made from the SCS node name and
+SCSSYSTEMID, slugged (`X86VMS` and 1025 give `x86vms_1025`), and saved to
+`node_id` in DATA_DIR; later runs read the file. `NODE_ID` overrides it.
+
+Why both: the node name alone can repeat across clusters on one broker, and the
+system ID alone tells a person nothing in the MQTT topics. Saving it means a later
+change of node name or system ID doesn't orphan the device and its history.
+
+Alternative: a hardware ID. On a virtual machine it is no more stable, and it is not
+readable in topics.
+
+## D6. Retained state, and the sensors' shape
+
+**Status:** proposed (Phase 1).
+
+- **The state message is retained** (QoS 0). HA gets the current values the moment
+  it creates the entities, and again after its own restart, with no wait between
+  discovery and state. The probe needed a 2-second sleep instead. Availability
+  still decides whether the values are shown.
+- **One device-discovery message** with one component per sensor. Disks and NICs
+  come and go, so the set is recomputed every sample. When it changes, discovery is
+  republished, with each removed key as `{"p": "sensor"}`.
+- **Units:** memory in MiB, disks in GiB, network in kB/s, each with a
+  `suggested_display_precision`. HA can convert `data_size` and `data_rate` to
+  another unit for display.
+- **Boot time, not uptime:** a `timestamp` sensor changes once per boot, while an
+  uptime counter would change, and be recorded, every interval.
+- **Disabled by default:** the minor CPU modes (interrupt, MP sync, executive,
+  supervisor, idle) and the modified page list exist, but are off until the user
+  enables them. That keeps the device page and the recorder lean.
+- **`expire_after`** = 3 × INTERVAL + 10 s on every measured sensor. A hung agent
+  whose connection stays up still goes unavailable.
+
+## D7. The broker password only from a file the owner alone can read
+
+**Status:** proposed (Phase 1).
+
+`MQTT_PASSWORD_FILE` names a file holding one line. The agent refuses to start if
+group or world can read it, never logs it, and clears it from memory on exit. There
+is no inline password setting: configuration files get copied, mailed and committed.

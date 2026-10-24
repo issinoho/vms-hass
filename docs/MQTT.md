@@ -31,9 +31,12 @@ The Mosquitto 2 broker in the app answers a wrong password with return code 5, n
   `dev` (device: `ids`, `name`, `mf`, `mdl`, `sw`, ...), `o` (origin: `name`, `sw`,
   `url`; required for device discovery), `cmps` (components, keyed by an ID of our
   choosing; each has `p`, the platform, plus that platform's options, and a
-  `unique_id`). Options shared by every component, such as `state_topic`,
-  `availability_topic` and `qos`, can go at the top level. (HA MQTT, "Device discovery
-  payload".) Abbreviations are listed under "Using abbreviations in discovery".
+  `unique_id`). A few options shared by every component may go at the top level:
+  `state_topic`, `availability_topic`, `availability` and `qos` among them. Others
+  may not: HA 2026.10.3 refused the whole message for a top-level `expire_after`
+  (NOTES.md 3), so per-sensor options stay inside each component. (HA MQTT, "Device
+  discovery payload".) Abbreviations are listed under "Using abbreviations in
+  discovery".
 - **Removing:** an empty retained payload on the config topic removes the device and
   its entities. Removing one component means republishing the config with that
   component reduced to `{"p": "<platform>"}`. (HA MQTT, "Discovery messages", device
@@ -49,4 +52,5 @@ The Mosquitto 2 broker in the app answers a wrong password with return code 5, n
   diagnostic` for identity fields. (<https://www.home-assistant.io/integrations/sensor.mqtt/>,
   <https://developers.home-assistant.io/docs/core/entity/sensor/>.)
 
-Seen working on HA 2026.10.3 with `probes/mqtt_probe.c` (NOTES.md 2).
+Seen working on HA 2026.10.3 with `probes/mqtt_probe.c` (NOTES.md 2) and with the
+Phase 1 agent (NOTES.md 3).
