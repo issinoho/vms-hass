@@ -95,3 +95,17 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
   runs are removed. This removed the six orphaned NIC sensors from the first run.
 - Run with only NETMBX and TMPMBX: about 0.5 s of CPU per 2 minutes on x86, 0.1 s on IA64.
 - A deleted batch job made HA mark the node unavailable in 2 s (x86) and 10 s (IA64).
+
+## 6. The dashboard (2026-10-25)
+
+- `tools/dashboard.py` generates the "OpenVMS" dashboard (`openvms-servers`) from
+  each node's entity stem, disks and NICs. It has an overview of every node, then one
+  view per node with every sensor. It was created on the user's HA with the user's OK.
+- Per the user's request for all details, the six default-disabled sensors per node
+  were enabled in HA's entity registry. That is reversible in the UI, and the agent's
+  defaults are unchanged.
+- The summary card is a markdown template reading the device registry (`device_attr`:
+  model, sw_version, hw_version, serial_number) and the sensors. It was checked with
+  HA's template engine before use.
+- When a node's disks or NICs change, rerun the generator: the dashboard does not
+  follow sensors by itself.
