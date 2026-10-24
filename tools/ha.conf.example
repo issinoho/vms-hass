@@ -1,0 +1,8 @@
+# Copy to tools/ha.conf (not committed): the Home Assistant used for the live tests.
+# MQTT_HOST is the broker's LAN address (the Mosquitto add-on on the HA host),
+# not the HA web URL: MQTT does not go through the HTTPS reverse proxy.
+HA_URL=https://<ha-host>
+MQTT_HOST=<broker-host>
+MQTT_PORT=1883
+MQTT_USER=<mqtt-user>
+# The password goes in out/ha/mqtt.pwd (git-ignored), never here.

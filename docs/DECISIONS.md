@@ -1,0 +1,66 @@
+# Decisions
+
+Each decision with its status, the evidence and the alternatives considered.
+
+## D0. Names: vms-hass, HASS, HASS$
+
+**Status:** approved by the user with the plan (2026-10-24).
+
+Repository `vms-hass`, PCSI product `HASS` (producer ISSINOHO), rooted logical
+`HASS$ROOT`, image `[BIN]HASS_AGENT.EXE`, C prefix `ha_`. The product name is kept short
+because PCSI refuses kit names over 39 characters (vms-beszel D0, vms-lighttpd).
+
+Alternatives: `vms-homeassistant` (long, and the product name would need shortening
+anyway); `vms-mqtt` (names the transport, not the purpose, and would suit a general
+MQTT client library better).
+
+## D1. Transport: MQTT with HA's MQTT discovery
+
+**Status:** chosen by the user (2026-10-24).
+
+The agent publishes to an MQTT broker (the Mosquitto add-on on HA OS). HA's built-in
+MQTT integration turns the discovery messages into a device with sensors.
+
+Why: it is HA's standard way for external systems to push state; nothing has to be
+written or maintained on the HA side; availability, devices, units and long-term
+statistics come from HA's existing support; it works in both directions when commands
+are added (D3); and other tools (Node-RED, Grafana, InfluxDB bridges) can read the same
+topics.
+
+Alternatives:
+- **A custom HA integration (Python, through HACS)** that the agent pushes to over
+  HTTP or WebSocket: no broker, a set-up wizard and branding, but two codebases, and
+  the Python side must follow HA's internal API changes every few releases.
+- **HA's REST API (`POST /api/states`)** with a long-lived token: entities created this
+  way have no device, no unique ID and are lost on restart. HA advises against it for
+  integrations.
+- **HA polling an HTTP endpoint on the node** (vms-steward's API or a small CGI):
+  pull instead of push, and HA has to reach every node.
+
+## D2. Language and ABI: C99, VSI C, 32-bit pointers, SSL3 *_SHR32
+
+**Status:** proposed, following vms-beszel D2 (approved there).
+
+The same combination as vms-beszel, vms-steward and vmsguard. VSI Python would add an
+interpreter dependency on every node and still need C for the system services.
+
+## D3. Read-only first
+
+**Status:** chosen by the user (2026-10-24).
+
+The first release only publishes; the agent subscribes to nothing but
+`homeassistant/status`. Commands from HA come later, as an allow-list behind their own
+security design (PLAN.md, "Later"). Never free-form DCL.
+
+## D4. Reuse vms-beszel's samplers and network layer by copying
+
+**Status:** proposed.
+
+Copy `bz_plat_vms.c` (samplers), `bz_net_ossl.c` (sockets and TLS) and the buffer
+helpers from vms-beszel at a recorded commit (47dbcf8 at the time of writing), renamed
+to `ha_`. Their behaviour on both architectures is already tested, including the
+`$GETRMI` pitfalls in beszel's NOTES.md.
+
+Alternative: a shared library repository used by both. Cleaner in the long run, but it
+adds a build dependency and a release step to beszel for a project that does not exist
+yet. Revisit if a third project needs the same code.
