@@ -42,6 +42,8 @@ void ha_plat_log(int level, const char *msg);
 int ha_plat_init(void);
 int ha_plat_identity(struct ha_identity *id);
 int ha_plat_sample(struct ha_sample *s);
+/* called about once a second: counters that must be read often (LAN) */
+void ha_plat_poll(void);
 int ha_plat_stop_requested(void);
 
 /* ---- network ---- */

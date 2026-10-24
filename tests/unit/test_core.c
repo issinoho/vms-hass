@@ -224,13 +224,14 @@ static void test_json(void)
 {
     ha_buf b;
     ha_json j;
+    volatile double zero = 0;           /* VSI C refuses a constant 0.0 / 0.0 */
     ha_buf_init(&b);
     ha_json_init(&j, &b);
     ha_json_obj(&j, NULL);
     ha_json_str(&j, "s", "a\"b\\c\nd\x01");
     ha_json_num(&j, "n", 1.25, 1);
     ha_json_num(&j, "z", -0.001, 1);
-    ha_json_num(&j, "nan", 0.0 / 0.0, 1);
+    ha_json_num(&j, "nan", zero / zero, 1);
     ha_json_int(&j, "i", -42);
     ha_json_arr(&j, "a");
     ha_json_bool(&j, NULL, 1);
@@ -653,6 +654,45 @@ static void test_agent(void)
         CHECK(ha_agent_input(&a, ok, 4, t));
         ha_agent_closed(&a, t + 60000);
         CHECK(ha_agent_backoff_ms(&a, 0) == 1000);
+    }
+
+    /* the published keys survive a restart: a sensor gone meanwhile is removed */
+    {
+        static ha_agent b;
+        static const char saved[] = "cpu\nnic_gone_rx\n\ndisk_dka0_free\n";
+        ha_buf txt;
+        ha_agent_init(&b, &cfg, &id, NULL, NULL, t);
+        ha_agent_load_published(&b, saved, strlen(saved));
+        CHECK(b.have_published && b.published.n == 3);
+        base_sample(&smp);
+        CHECK(ha_agent_sample(&b, &smp, t));
+        CHECK(ha_agent_begin(&b, t));
+        CHECK(ha_agent_input(&b, ok, 4, t));
+        c = -1;
+        {
+            ha_mqtt_dec d;
+            struct ha_mqtt_packet p;
+            struct ha_mqtt_publish_in pub;
+            ha_mqtt_dec_init(&d);
+            ha_mqtt_feed(&d, ha_agent_out(&b)->p, ha_agent_out(&b)->len);
+            while (ha_mqtt_next(&d, &p) == 1)
+                if (p.type == HA_MQTT_PUBLISH && ha_mqtt_parse_publish(&p, &pub) &&
+                    pub.topic_len == strlen("homeassistant/device/n_1/config")) {
+                    char *doc = (char *)pub.payload;
+                    c = strstr(doc, "\"nic_gone_rx\":{\"p\":\"sensor\"}") != NULL &&
+                        strstr(doc, "\"cpu\":{\"p\":\"sensor\",\"unique_id\"") != NULL;
+                }
+            ha_mqtt_dec_free(&d);
+        }
+        CHECK(c == 1);
+        CHECK(ha_agent_published_changed(&b));
+        CHECK(!ha_agent_published_changed(&b));
+        ha_buf_init(&txt);
+        ha_agent_published_text(&b, &txt);
+        CHECK(strstr((char *)txt.p, "nic_gone_rx") == NULL);
+        CHECK(strncmp((char *)txt.p, "cpu\ncpu_interrupt\n", 18) == 0);
+        ha_buf_free(&txt);
+        ha_agent_free(&b);
     }
 
     /* --remove: empty retained messages on all three topics */

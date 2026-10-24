@@ -337,7 +337,8 @@ int ha_model_state(const struct ha_comp_set *set, const struct ha_sample *s,
             ha_json_num(&j, key, s->compute_queue, 0);
             break;
         case HA_SRC_MEM_USED:
-            ha_json_num(&j, key, used_pct(s->mem_total, s->mem_free), 1);
+            /* SHOW MEMORY's "In Use": neither free nor on the modified list */
+            ha_json_num(&j, key, used_pct(s->mem_total, s->mem_free + s->mem_modified), 1);
             break;
         case HA_SRC_MEM_FREE:
             ha_json_num(&j, key, (double)s->mem_free / MiB, 0);

@@ -178,6 +178,7 @@ int main(int argc, char **argv)
     static struct ha_identity id;
     static struct ha_sample sample;
     static char nid[64], dev_name[64], client_id[96], port[24], status_topic[128];
+    static char published_path[1100];
     ha_conf conf;
     ha_buf file, pw;
     char err[300];
@@ -310,11 +311,15 @@ int main(int argc, char **argv)
         { rc = print_mode(&cfg, &id); goto out; }
 
     ha_agent_init(&agent, &cfg, &id, log_cb, NULL, ha_plat_now_ms());
+    ha_plat_data_path(published_path, sizeof published_path, dir, "published");
+    if (ha_plat_read_file(published_path, &file))
+        ha_agent_load_published(&agent, (const char *)file.p, file.len);
     say(HA_LOG_INFO, "hass_agent %s: node %s as \"%s\", broker %s:%s%s, every %ld s",
         HA_VERSION, nid, dev_name, host, port, tls ? " (TLS)" : "", interval);
 
     while (!ha_plat_stop_requested()) {
         uint64_t now = ha_plat_now_ms(), wait;
+        ha_plat_poll();
         if (!sock && now >= retry_at) {
             sock = ha_net_open(host, port, tls, *ca ? ca : NULL, CONNECT_TIMEOUT_MS,
                                err, sizeof err);
@@ -374,6 +379,12 @@ int main(int argc, char **argv)
                 wait = WAIT_SLICE_MS;
             if (!pump(&agent, sock, (unsigned)wait) || !flush(&agent, sock))
                 goto drop;
+            if (ha_agent_published_changed(&agent)) {
+                ha_agent_published_text(&agent, &file);
+                if (!ha_plat_write_file(published_path, file.p ? file.p : (unsigned char *)"",
+                                        file.len))
+                    say(HA_LOG_WARN, "cannot save the sensor list to %s", published_path);
+            }
             continue;
 drop:
             ha_net_close(sock);

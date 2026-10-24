@@ -266,6 +266,10 @@ int ha_plat_sample(struct ha_sample *s)
     return 1;
 }
 
+void ha_plat_poll(void)
+{
+}
+
 int ha_plat_stop_requested(void)
 {
     return stop_flag;

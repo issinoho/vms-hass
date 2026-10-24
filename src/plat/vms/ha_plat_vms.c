@@ -1,0 +1,739 @@
+/* ha_plat_vms.c - the platform layer on OpenVMS (x86-64 and IA64).
+ *
+ * Mostly vms-beszel 47dbcf8 bz_plat_vms.c (D4); "beszel NOTES n" below is
+ * vms-beszel's docs/NOTES.md.  Every source needs no privilege:
+ *   $GETSYI   identity, memory size, page and swap files, boot time
+ *   $GETRMI   CPU mode times (RMI$_MODES), free/modified lists, process states;
+ *             every item must be passed its exact size (beszel NOTES 1)
+ *   $GETDVI   every mounted disk's size and free blocks (NOTES.md 5)
+ *   $QIO      LAN read-counters on each LAN device's unit 0 (beszel NOTES 12-13);
+ *             once a 32-bit counter sticks at 4 GiB, LANCP's 64-bit figures
+ *   SHOW USERS  interactive users: an unprivileged process scan sees only its
+ *             own processes, and SHOW is installed with privileges (NOTES.md 5)
+ *
+ * Built with SYS$LIB_C.TLB for NMADEF; nothing from that library is copied
+ * into the sources (beszel NOTES 18).
+ */
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#include <descrip.h>
+#include <dcdef.h>
+#include <dvidef.h>
+#include <dvsdef.h>
+#include <efndef.h>
+#include <iodef.h>
+#include <lnmdef.h>
+#include <nmadef.h>
+#include <rmidef.h>
+#include <ssdef.h>
+#include <starlet.h>
+#include <syidef.h>
+
+#include "ha_agent.h"
+#include "ha_platform.h"
+#include "ha_text.h"
+
+/* POSIX, in the C RTL, but hidden by VSI C under /STANDARD=C99 (beszel NOTES 26) */
+FILE *popen(const char *command, const char *mode);
+int pclose(FILE *stream);
+
+/* item lists: our own types, as the default STARLET headers have no IOSB
+   (beszel NOTES 16) */
+struct item {
+    unsigned short len, code;
+    void *buf;
+    unsigned short *retlen;
+};
+struct iosb {
+    unsigned short st, cnt;
+    unsigned int dev;
+};
+
+#define MAX_CPU 64
+static volatile sig_atomic_t stop_flag;
+static unsigned int cpu_prev[MAX_CPU][8];
+static struct ha_cpu_modes cpu_acc;     /* all CPUs, 64-bit, only ever grows */
+static int cpu_n = -1, cpu_have;
+static unsigned int page_size = 8192;
+
+static void say(int level, const char *fmt, ...);
+
+/* ---- time ---- */
+
+static uint64_t vms_time(void)
+{
+    uint64_t q;
+    sys$gettim((void *)&q);             /* 100 ns units since 17-NOV-1858 */
+    return q;
+}
+
+uint64_t ha_plat_now_ms(void)
+{
+    /* The system clock can be set back.  Intervals must never run backwards,
+       nor stand still until the clock catches up: a step back is absorbed
+       into an offset, so time goes on from where it was (beszel review I7). */
+    static uint64_t last, adjust;
+    uint64_t now = vms_time() / 10000 + adjust;
+    if (now < last) {
+        adjust += last - now;
+        now = last;
+    }
+    last = now;
+    return now;
+}
+
+void ha_plat_sleep_ms(unsigned ms)
+{
+    /* usleep() takes less than a second: longer values return at once */
+    if (ms >= 1000)
+        sleep(ms / 1000);
+    if (ms % 1000)
+        usleep((ms % 1000) * 1000);
+}
+
+unsigned ha_plat_random(void)
+{
+    return (unsigned)rand();
+}
+
+/* ---- files ---- */
+
+int ha_plat_read_file(const char *path, ha_buf *out)
+{
+    FILE *f = fopen(path, "r");
+    char tmp[4096];
+    size_t n;
+    if (!f)
+        return 0;
+    ha_buf_clear(out);
+    while ((n = fread(tmp, 1, sizeof tmp, f)) > 0)
+        ha_buf_put(out, tmp, n);
+    fclose(f);
+    return !out->oom;
+}
+
+int ha_plat_write_file(const char *path, const void *p, size_t n)
+{
+    /* owner read/write only: (S:RWED,O:RWED,G,W) in VMS terms */
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600, "rfm=stmlf");
+    long w;
+    if (fd < 0)
+        return 0;
+    w = (long)write(fd, p, n);
+    if (close(fd) != 0 || w != (long)n)
+        return 0;
+    return 1;
+}
+
+int ha_plat_exists(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+int ha_plat_file_exposed(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && (st.st_mode & 044) != 0;
+}
+
+void ha_plat_data_path(char *out, size_t cap, const char *dir, const char *name)
+{
+    /* HASS$ROOT:[DATA] + "node_id" -> HASS$ROOT:[DATA]node_id.;
+       a Unix-style directory gets a slash */
+    size_t n = strlen(dir);
+    if (n && (dir[n - 1] == ']' || dir[n - 1] == '>' || dir[n - 1] == ':'))
+        snprintf(out, cap, "%s%s.", dir, name);
+    else
+        snprintf(out, cap, "%s/%s", dir, name);
+}
+
+const char *ha_plat_default_config(void)
+{
+    return "HASS$ROOT:[CONF]AGENT.CONF";
+}
+
+const char *ha_plat_default_data_dir(void)
+{
+    return "HASS$ROOT:[DATA]";
+}
+
+const char *ha_plat_default_ca_file(void)
+{
+    /* SSL3 loads no CA store for us (beszel NOTES 20): the kit's bundle, if there */
+    static const char bundle[] = "HASS$ROOT:[CONF]CACERT.PEM";
+    struct stat st;
+    return stat(bundle, &st) == 0 ? bundle : NULL;
+}
+
+/* ---- configuration overrides: logical name HASS$<NAME> ---- */
+
+static int trnlnm(const char *table, const char *lnm, char *val, unsigned short *vl)
+{
+    struct item il[2];
+    struct dsc$descriptor_s tab, nam;
+    unsigned int attr = LNM$M_CASE_BLIND;
+    uint64_t rl = 0;        /* 8 bytes of room, as for every return length (beszel NOTES 23) */
+    tab.dsc$w_length = (unsigned short)strlen(table);
+    tab.dsc$b_dtype = DSC$K_DTYPE_T;
+    tab.dsc$b_class = DSC$K_CLASS_S;
+    tab.dsc$a_pointer = (char *)table;
+    nam.dsc$w_length = (unsigned short)strlen(lnm);
+    nam.dsc$b_dtype = DSC$K_DTYPE_T;
+    nam.dsc$b_class = DSC$K_CLASS_S;
+    nam.dsc$a_pointer = (char *)lnm;
+    memset(il, 0, sizeof il);
+    il[0].len = 255;
+    il[0].code = LNM$_STRING;
+    il[0].buf = val;
+    il[0].retlen = (unsigned short *)&rl;
+    if (!(sys$trnlnm(&attr, &tab, &nam, 0, il) & 1))
+        return 0;
+    *vl = (unsigned short)rl;
+    return 1;
+}
+
+int ha_plat_conf_override(void *ctx, const char *name, ha_buf *out)
+{
+    /* HASS$<NAME> in the process table, then the system table: not the job
+       or group tables, which other users can write (beszel review L3) */
+    char lnm[64], val[256];
+    unsigned short vl = 0;
+    (void)ctx;
+    snprintf(lnm, sizeof lnm, "HASS$%s", name);
+    if (!trnlnm("LNM$PROCESS_TABLE", lnm, val, &vl) && !trnlnm("LNM$SYSTEM_TABLE", lnm, val, &vl))
+        return 0;
+    ha_buf_put(out, val, vl);
+    return 1;
+}
+
+/* ---- logging: to SYS$OUTPUT, the detached process's log file ---- */
+
+void ha_plat_log(int level, const char *msg)
+{
+    static const char *const names[] = { "DEBUG", "INFO", "WARN", "ERROR" };
+    time_t now = time(NULL);
+    char ts[32], clean[600];
+    size_t i;
+    /* single-threaded: localtime is safe, and VSI C hides localtime_r under C99 */
+    strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", localtime(&now));
+    for (i = 0; msg[i] && i < sizeof clean - 1; i++)
+        clean[i] = ((unsigned char)msg[i] < 0x20 || msg[i] == 0x7F) ? '?' : msg[i];
+    clean[i] = 0;
+    printf("%s %-5s %s\n", ts, names[level & 3], clean);
+    fflush(stdout);
+}
+
+static void say(int level, const char *fmt, ...)
+{
+    char msg[300];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    ha_plat_log(level, msg);
+}
+
+/* ---- system services ---- */
+
+static int syi(int code, void *buf, unsigned short len, unsigned short *rl)
+{
+    struct item il[2];
+    struct iosb iosb;
+    unsigned short dummy;
+    int st;
+    memset(il, 0, sizeof il);
+    il[0].len = len;
+    il[0].code = (unsigned short)code;
+    il[0].buf = buf;
+    il[0].retlen = rl ? rl : &dummy;
+    st = sys$getsyiw(EFN$C_ENF, 0, 0, il, (void *)&iosb, 0, 0);
+    return (st & 1) ? iosb.st & 1 : 0;
+}
+
+/* one $GETRMI item, at its exact size (beszel NOTES 1).  The return length gets
+   8 bytes: RMI$_MODES writes more than the 16-bit word an item list provides. */
+static int rmi(int code, void *buf, unsigned short len)
+{
+    struct item il[2];
+    struct iosb iosb;
+    uint64_t rl = 0;
+    int st;
+    memset(il, 0, sizeof il);
+    il[0].len = len;
+    il[0].code = (unsigned short)code;
+    il[0].buf = buf;
+    il[0].retlen = (unsigned short *)&rl;
+    st = sys$getrmi(EFN$C_ENF, 0, 0, il, (void *)&iosb, 0, 0);
+    if (st & 1) {
+        sys$synch(EFN$C_ENF, (void *)&iosb);
+        st = iosb.st;
+    }
+    return st & 1;
+}
+
+static uint64_t rmi_u(int code, int size)
+{
+    if (size == 8) {
+        uint64_t v = 0;
+        return rmi(code, &v, 8) ? v : 0;
+    } else {
+        unsigned int w = 0;
+        return rmi(code, &w, 4) ? w : 0;
+    }
+}
+
+static void dsc(struct dsc$descriptor_s *d, char *p, unsigned short n)
+{
+    d->dsc$w_length = n;
+    d->dsc$b_dtype = DSC$K_DTYPE_T;
+    d->dsc$b_class = DSC$K_CLASS_S;
+    d->dsc$a_pointer = p;
+}
+
+/* "_X86VMS$DKA0:" -> "DKA0:", "_$1$DGA100:" -> "$1$DGA100:", "_DSA1:" -> "DSA1:" */
+static void clean_dev(char *out, size_t cap, const char *name, int keep_colon)
+{
+    const char *s = name, *e;
+    if (*s == '_')
+        s++;
+    if (*s != '$' && (e = strchr(s, '$')) != NULL)
+        s = e + 1;                      /* a node name, not an allocation class */
+    e = strchr(s, ':');
+    if (e && keep_colon)
+        e++;
+    ha_strlcpyn(out, cap, s, e ? (size_t)(e - s) : strlen(s));
+}
+
+/* ---- LAN devices: channels kept open, 32-bit counters extended ---- */
+
+struct nic {
+    char name[32];
+    unsigned short chan;
+    int have;
+    unsigned int raw_tx, raw_rx;    /* last 32-bit readings */
+    uint64_t tx, rx;                /* extended 64-bit totals */
+    int stuck;                      /* a 32-bit counter stopped at 0xFFFFFFFF: use LANCP */
+    int lancp_failed;
+    uint64_t lancp_ms;              /* when LANCP was last asked */
+};
+
+#define LANCP_INTERVAL_MS 30000     /* about 22 ms of CPU a read on IA64 */
+#define NIC_POLL_MS 5000            /* 4 GiB takes 34 s at 1 Gb/s: never miss a wrap */
+static struct nic nics[HA_MAX_NIC];
+static int nnic;
+static uint64_t nic_last_ms;
+static unsigned char cbuf[4096];
+
+static void nic_open_all(void)
+{
+    char name[65];
+    struct dsc$descriptor_s nd, pat, dev;
+    unsigned short nl;
+    uint64_t ctx = 0;
+    int devclass = DC$_SCOM;
+    struct item scan[2];
+    static char star[] = "*";
+    memset(scan, 0, sizeof scan);
+    scan[0].len = 4;
+    scan[0].code = DVS$_DEVCLASS;
+    scan[0].buf = &devclass;
+    dsc(&nd, name, 64);
+    dsc(&pat, star, 1);
+    while (nnic < HA_MAX_NIC) {
+        unsigned int unit = 1;
+        struct item il[2];
+        struct iosb iosb;
+        unsigned short chan = 0;
+        int st = sys$device_scan(&nd, &nl, &pat, scan, (void *)&ctx);
+        if (!(st & 1))
+            break;
+        dsc(&dev, name, nl);
+        memset(il, 0, sizeof il);
+        il[0].len = 4;
+        il[0].code = DVI$_UNIT;
+        il[0].buf = &unit;
+        if (!(sys$getdviw(EFN$C_ENF, 0, &dev, il, (void *)&iosb, 0, 0, 0) & 1) || unit != 0)
+            continue;           /* template units (0) carry the device counters */
+        if (!(sys$assign(&dev, &chan, 0, 0, 0) & 1))
+            continue;           /* e.g. RMA0: not ours to read (beszel NOTES 15) */
+        name[nl] = 0;
+        clean_dev(nics[nnic].name, sizeof nics[0].name, name, 0);
+        nics[nnic].chan = chan;
+        nnic++;
+    }
+}
+
+static int nic_read(struct nic *n, unsigned int *tx, unsigned int *rx)
+{
+    struct dsc$descriptor_s bd;
+    struct iosb iosb;
+    int st, i, got = 0;
+    dsc(&bd, (char *)cbuf, sizeof cbuf);
+    st = sys$qiow(EFN$C_ENF, n->chan, IO$_SENSEMODE | IO$M_CTRL | IO$M_RD_COUNT, (void *)&iosb,
+                  0, 0, 0, (unsigned long)&bd, 0, 0, 0, 0);
+    if (!(st & 1) || !(iosb.st & 1))
+        return 0;
+    /* NMA counters: a 16-bit header (type, width), then the value */
+    for (i = 0; i + 2 <= (int)iosb.cnt;) {
+        unsigned short h;
+        int type, w, bytes;
+        unsigned int v = 0;
+        memcpy(&h, cbuf + i, 2);
+        i += 2;
+        type = h & NMA$M_CNT_TYP;
+        w = (h & NMA$M_CNT_WID) >> 13;
+        bytes = w == 1 ? 1 : w == 2 ? 2 : w == 3 ? 4 : 8;
+        if (h & NMA$M_CNT_MAP)
+            bytes += 2;
+        if (i + bytes > (int)iosb.cnt)
+            break;
+        if (bytes == 4)
+            memcpy(&v, cbuf + i, 4);
+        if (type == NMA$C_CTLIN_BSN && bytes == 4) {
+            *tx = v;
+            got |= 1;
+        } else if (type == NMA$C_CTLIN_BRC && bytes == 4) {
+            *rx = v;
+            got |= 2;
+        }
+        i += bytes;
+    }
+    return got == 3;
+}
+
+static void extend(unsigned int raw, unsigned int *last, uint64_t *total)
+{
+    /* a 32-bit counter that went down has wrapped: add the distance mod 2^32 */
+    *total += (unsigned int)(raw - *last);
+    *last = raw;
+}
+
+/* LANCP's figures for a device: 64-bit, readable without privilege (LANCP
+   asks the LANACP process; beszel NOTES 41) */
+static int lancp_read(const char *dev, uint64_t *tx, uint64_t *rx)
+{
+    char cmd[96], line[256];
+    FILE *p;
+    int got = 0;
+    snprintf(cmd, sizeof cmd, "mcr lancp show device %s/counters", dev);
+    p = popen(cmd, "r");
+    if (!p)
+        return 0;
+    while (fgets(line, sizeof line, p)) {
+        unsigned long long v;
+        int off = 0;
+        const char *rest;
+        if (sscanf(line, " %llu %n", &v, &off) != 1 || off == 0)
+            continue;
+        rest = line + off;
+        /* exactly "Bytes received" / "Bytes sent", not "Multicast bytes ..." */
+        if (strncmp(rest, "Bytes received", 14) == 0) {
+            *rx = v;
+            got |= 2;
+        } else if (strncmp(rest, "Bytes sent", 10) == 0) {
+            *tx = v;
+            got |= 1;
+        }
+    }
+    pclose(p);
+    return got == 3;
+}
+
+static void nic_refresh(void)
+{
+    int i;
+    nic_last_ms = ha_plat_now_ms();
+    for (i = 0; i < nnic; i++) {
+        struct nic *n = &nics[i];
+        unsigned int tx, rx;
+        if (!nic_read(n, &tx, &rx))
+            continue;
+        if (!n->have) {
+            n->have = 1;
+            n->raw_tx = tx;
+            n->raw_rx = rx;
+            n->tx = tx;
+            n->rx = rx;
+            continue;
+        }
+        if (!n->stuck && (tx == 0xFFFFFFFFu || rx == 0xFFFFFFFFu)) {
+            /* DECnet-style counters stop at their maximum instead of wrapping
+               (beszel NOTES 41) */
+            n->stuck = 1;
+            n->lancp_ms = 0;
+            say(HA_LOG_WARN, "LAN counters for %s reached their 32-bit maximum: reading them "
+                "through LANCP from now on (every %d s)", n->name, LANCP_INTERVAL_MS / 1000);
+        }
+        if (n->stuck) {
+            uint64_t now = ha_plat_now_ms(), ltx, lrx;
+            if (n->lancp_ms && now - n->lancp_ms < LANCP_INTERVAL_MS)
+                continue;
+            n->lancp_ms = now;
+            if (lancp_read(n->name, &ltx, &lrx)) {
+                if (ltx > n->tx) n->tx = ltx;
+                if (lrx > n->rx) n->rx = lrx;
+                n->lancp_failed = 0;
+            } else if (!n->lancp_failed) {
+                n->lancp_failed = 1;
+                say(HA_LOG_WARN, "LANCP couldn't read the counters for %s: its traffic isn't "
+                    "counted until it can", n->name);
+            }
+            continue;
+        }
+        extend(tx, &n->raw_tx, &n->tx);
+        extend(rx, &n->raw_rx, &n->rx);
+    }
+}
+
+void ha_plat_poll(void)
+{
+    if (ha_plat_now_ms() - nic_last_ms >= NIC_POLL_MS)
+        nic_refresh();
+}
+
+/* ---- disks: every disk mounted on this node, shadow set members left out ---- */
+
+static void disks(struct ha_sample *s)
+{
+    char name[65];
+    struct dsc$descriptor_s nd, pat, dev;
+    unsigned short nl;
+    uint64_t ctx = 0;
+    int devclass = DC$_DISK;
+    struct item scan[2];
+    static char star[] = "*";
+    memset(scan, 0, sizeof scan);
+    scan[0].len = 4;
+    scan[0].code = DVS$_DEVCLASS;
+    scan[0].buf = &devclass;
+    dsc(&nd, name, 64);
+    dsc(&pat, star, 1);
+    while (s->ndisk < HA_MAX_DISK) {
+        unsigned int mnt = 0, foreign = 0, member = 0, maxb = 0, freeb = 0;
+        char vol[13];
+        unsigned short vl = 0;
+        struct item il[7];
+        struct iosb iosb;
+        struct ha_disk *d = &s->disk[s->ndisk];
+        int st = sys$device_scan(&nd, &nl, &pat, scan, (void *)&ctx);
+        if (!(st & 1))
+            break;
+        dsc(&dev, name, nl);
+        memset(il, 0, sizeof il);
+        il[0].len = 4;  il[0].code = DVI$_MNT;         il[0].buf = &mnt;
+        il[1].len = 4;  il[1].code = DVI$_FOR;         il[1].buf = &foreign;
+        il[2].len = 4;  il[2].code = DVI$_SHDW_MEMBER; il[2].buf = &member;
+        il[3].len = 4;  il[3].code = DVI$_MAXBLOCK;    il[3].buf = &maxb;
+        il[4].len = 4;  il[4].code = DVI$_FREEBLOCKS;  il[4].buf = &freeb;
+        il[5].len = 12; il[5].code = DVI$_VOLNAM;      il[5].buf = vol; il[5].retlen = &vl;
+        if (!(sys$getdviw(EFN$C_ENF, 0, &dev, il, (void *)&iosb, 0, 0, 0) & 1) || !(iosb.st & 1))
+            continue;
+        /* a shadow set member's space is its virtual unit's (DSAn:); a foreign
+           mount has no file system to measure */
+        if (!mnt || foreign || member || maxb == 0)
+            continue;
+        name[nl] = 0;
+        vol[vl < sizeof vol ? vl : sizeof vol - 1] = 0;
+        clean_dev(d->name, sizeof d->name, name, 1);
+        {
+            const char *v = vol;
+            size_t n = strlen(vol);
+            ha_trim(&v, &n);
+            ha_strlcpyn(d->label, sizeof d->label, v, n);
+        }
+        d->total = (uint64_t)maxb * 512;
+        d->free = (uint64_t)(freeb < maxb ? freeb : maxb) * 512;
+        s->ndisk++;
+    }
+}
+
+/* ---- interactive users: SHOW USERS, at most once a minute ---- */
+
+#define USERS_INTERVAL_MS 60000
+static int users = -1;
+static uint64_t users_ms;
+
+static void read_users(void)
+{
+    FILE *p;
+    char line[256];
+    int n = -1;
+    uint64_t now = ha_plat_now_ms();
+    if (users >= 0 && now - users_ms < USERS_INTERVAL_MS)
+        return;
+    users_ms = now;
+    p = popen("show users", "r");
+    if (!p)
+        return;
+    /* "    Total number of users = 2,  number of processes = 3" */
+    while (fgets(line, sizeof line, p)) {
+        const char *t = strstr(line, "Total number of users =");
+        if (t)
+            n = atoi(t + 23);
+    }
+    pclose(p);
+    if (n >= 0)
+        users = n;
+    else if (users < 0) {
+        users = 0;
+        say(HA_LOG_WARN, "couldn't read the number of users from SHOW USERS");
+    }
+}
+
+/* ---- the platform interface ---- */
+
+static void on_signal(int sig)
+{
+    (void)sig;
+    stop_flag = 1;
+}
+
+int ha_plat_init(void)
+{
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+#ifdef SIGPIPE
+    signal(SIGPIPE, SIG_IGN);           /* not declared by VSI C under /STANDARD=C99 */
+#endif
+    srand((unsigned)time(NULL) ^ (unsigned)getpid());
+    syi(SYI$_PAGE_SIZE, &page_size, 4, NULL);
+    nic_open_all();
+    nic_refresh();
+    return 1;
+}
+
+int ha_plat_identity(struct ha_identity *id)
+{
+    char ver[9], hw[96], arch[16], node[16];
+    unsigned short vl = 0, hl = 0, al = 0, nl = 0;
+    unsigned int sysid = 0;
+    const char *v;
+    size_t n;
+    memset(id, 0, sizeof *id);
+    syi(SYI$_VERSION, ver, 8, &vl);
+    syi(SYI$_HW_NAME, hw, sizeof hw - 1, &hl);
+    syi(SYI$_ARCH_NAME, arch, sizeof arch - 1, &al);
+    syi(SYI$_NODENAME, node, sizeof node - 1, &nl);
+    /* the low 32 of SCSSYSTEMID's 48 bits: what F$GETSYI("SCSSYSTEMID") shows */
+    syi(SYI$_SCSSYSTEMID, &sysid, 4, NULL);
+    v = ver;
+    n = vl;
+    ha_trim(&v, &n);
+    hw[hl] = 0;
+    arch[al] = 0;
+    node[nl] = 0;
+    ha_strlcpy(id->node, node, sizeof id->node);
+    if (sysid)
+        snprintf(id->system_id, sizeof id->system_id, "%u", sysid);
+    snprintf(id->version, sizeof id->version, "OpenVMS %.*s", (int)n, v);
+    ha_strlcpy(id->model, hw, sizeof id->model);
+    ha_strlcpy(id->arch, arch, sizeof id->arch);
+    return 1;
+}
+
+int ha_plat_sample(struct ha_sample *s)
+{
+    static unsigned char modes[4 + MAX_CPU * 33 + 512];
+    static int warned_cpus;
+    unsigned int ncpu = 0, i;
+    uint64_t memsize = 0, now, boot = 0;
+    unsigned int pf_page = 0, pf_free = 0, sw_page = 0, sw_free = 0;
+    memset(s, 0, sizeof *s);
+
+    /* RMI$_MODES: a CPU count, then per CPU an id byte and eight longwords of
+       10 ms ticks: [0] interrupt+idle, [1] MP synch, [2] kernel, [3] exec,
+       [4] super, [5] user, [6] compat, [7] idle.  The return length is wrong
+       on both architectures, so the count decides (beszel NOTES 3, 5). */
+    memset(modes, 0, sizeof modes);
+    if (!rmi(RMI$_MODES, modes, (unsigned short)sizeof modes))
+        return 0;
+    memcpy(&ncpu, modes, 4);
+    if (ncpu > MAX_CPU) {
+        if (!warned_cpus) {
+            warned_cpus = 1;
+            say(HA_LOG_WARN, "more than %d CPUs: the CPU figures cover the first %d", MAX_CPU, MAX_CPU);
+        }
+        ncpu = MAX_CPU;
+    }
+    if ((int)ncpu != cpu_n) {           /* the CPU set changed: new baselines */
+        cpu_n = (int)ncpu;
+        cpu_have = 0;
+    }
+    for (i = 0; i < ncpu; i++) {
+        unsigned int l[8], d[8];
+        int k;
+        memcpy(l, modes + 4 + i * 33 + 1, sizeof l);
+        /* deltas mod 2^32, accumulated in 64 bits.  [0] includes idle, and on
+           x86 [7] can advance more than [0] (beszel NOTES 4, 29): interrupt is
+           [0] - [7], clamped at 0. */
+        for (k = 0; k < 8; k++)
+            d[k] = cpu_have ? l[k] - cpu_prev[i][k] : 0;
+        memcpy(cpu_prev[i], l, sizeof l);
+        cpu_acc.interrupt += d[0] > d[7] ? d[0] - d[7] : 0;
+        cpu_acc.mpsync += d[1];
+        cpu_acc.kernel += d[2];
+        cpu_acc.exec += d[3];
+        cpu_acc.super += d[4];
+        cpu_acc.user += (uint64_t)d[5] + d[6];  /* compatibility mode counts as user */
+        cpu_acc.idle += d[7];
+    }
+    cpu_have = 1;
+    s->cpu = cpu_acc;
+    s->ncpu = (int)ncpu;
+
+    /* memory: SHOW MEMORY's Free and Modified lists */
+    syi(SYI$_MEMSIZE, &memsize, 8, NULL);
+    s->mem_total = memsize * page_size;
+    s->mem_free = rmi_u(RMI$_FRLIST, 8) * page_size;
+    s->mem_modified = rmi_u(RMI$_MODLIST, 8) * page_size;
+
+    syi(SYI$_PAGEFILE_PAGE, &pf_page, 4, NULL);
+    syi(SYI$_PAGEFILE_FREE, &pf_free, 4, NULL);
+    syi(SYI$_SWAPFILE_PAGE, &sw_page, 4, NULL);
+    syi(SYI$_SWAPFILE_FREE, &sw_free, 4, NULL);
+    s->page_total = (uint64_t)pf_page * page_size;
+    s->page_free = (uint64_t)(pf_free < pf_page ? pf_free : pf_page) * page_size;
+    s->swap_total = (uint64_t)sw_page * page_size;
+    s->swap_free = (uint64_t)(sw_free < sw_page ? sw_free : sw_page) * page_size;
+
+    /* boot time as Unix time: VMS keeps local time, so take the uptime and
+       count back from time(), which is UTC */
+    syi(SYI$_BOOTTIME, &boot, 8, NULL);
+    now = vms_time();
+    s->boot_time = (int64_t)time(NULL) - (int64_t)(now > boot && boot ? (now - boot) / 10000000 : 0);
+
+    s->processes = (int)rmi_u(RMI$_PROCS, 4);
+    s->compute_queue = (double)(rmi_u(RMI$_COM, 4) + rmi_u(RMI$_COMO, 4));
+    read_users();
+    s->interactive = users;
+
+    disks(s);
+    nic_refresh();
+    for (i = 0; i < (unsigned)nnic; i++) {
+        /* a device that has carried nothing since boot is configured but
+           unused (beszel NOTES 15): left out until it has traffic, when the
+           agent adds its sensors */
+        if (!nics[i].have || (nics[i].rx == 0 && nics[i].tx == 0))
+            continue;
+        ha_strlcpy(s->nic[s->nnic].name, nics[i].name, sizeof s->nic[0].name);
+        s->nic[s->nnic].tx = nics[i].tx;
+        s->nic[s->nnic].rx = nics[i].rx;
+        s->nnic++;
+    }
+    return s->ncpu > 0;
+}
+
+int ha_plat_stop_requested(void)
+{
+    return stop_flag;
+}

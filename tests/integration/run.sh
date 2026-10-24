@@ -160,6 +160,22 @@ check "exit status 0" test $rc -eq 0
 check "availability offline" test "$(S -t "$AVAIL_T" -C 1 -W 3)" = offline
 check "the broker saw a DISCONNECT, not a timeout" grep -q 'Client vms-hass-stubvms_1025 disconnected\.' broker.log
 
+echo "== a disk dismounted while the agent was stopped"
+check "the sensor list was saved" grep -q '^disk_dka100_used$' data/published
+echo 'disks DKA0:' > control
+S -t "$CONFIG_T" -R -C 1 -W 10 > restart.json & sp=$!
+sleep 0.3
+start_agent agent2b.log a.conf
+wait $sp
+check "its sensors are removed on the next start" python3 - restart.json <<'EOF2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["cmps"]["disk_dka100_used"] == {"p": "sensor"}, d["cmps"].get("disk_dka100_used")
+EOF2
+stop_agent
+check "and the saved list no longer has them" sh -c "! grep -q dka100 data/published"
+echo 'cpu 20' > control
+
 echo "== --remove"
 HA_STUB_CONTROL=$w/control "$AGENT" --remove a.conf > remove.log 2>&1; rc=$?
 check "exit status 0" test $rc -eq 0

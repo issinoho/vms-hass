@@ -73,3 +73,25 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
 - Mosquitto 2 logs `Client <id> disconnected.` for a DISCONNECT, and something else
   for a timeout or a dropped socket; the integration test uses that line to tell an
   orderly stop from a crash.
+
+## 5. Phase 2 on the nodes (2026-10-24)
+
+- Both nodes build with no warnings and pass all 255 unit checks on VMS. A constant
+  `0.0 / 0.0` is refused by VSI C (`%CC-W-FLOATOVERFL`); the test divides at run time.
+- `--print` agrees with DCL on both nodes:
+  - memory agrees with SHOW MEMORY (used = "In Use", neither free nor modified)
+  - users agree with SHOW USERS
+  - free space agrees with SHOW DEVICE's free blocks × 512
+  - CPU modes agree with MONITOR MODES over the same 11 s on x86 (about 62% busy, mostly kernel)
+- **Unprivileged process scans see only your own processes** (4 of 39 on x86), so
+  interactive users come from `SHOW USERS` through popen, at most once a minute.
+  SHOW is installed with privileges.
+- x86 has a system-mounted `LDM2585:` (label `MD…`), the boot memory disk, which is
+  88.8% full. SHOW DEVICE D doesn't list it, because its name starts with L.
+- On IA64, SHOW SYSTEM's uptime is 39 s shorter than `F$GETSYI("BOOTTIME")` implies.
+  The agent uses BOOTTIME.
+- NICs with zero counters since boot (IA64's EWA0, EIA0, EIB0) are left out until they
+  carry traffic. The published key list is saved in DATA_DIR, so sensors gone between
+  runs are removed. This removed the six orphaned NIC sensors from the first run.
+- Run with only NETMBX and TMPMBX: about 0.5 s of CPU per 2 minutes on x86, 0.1 s on IA64.
+- A deleted batch job made HA mark the node unavailable in 2 s (x86) and 10 s (IA64).

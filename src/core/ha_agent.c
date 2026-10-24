@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "ha_agent.h"
+#include "ha_text.h"
 
 static void say(ha_agent *a, int level, const char *fmt, ...)
 {
@@ -77,6 +78,8 @@ static int publish_discovery(ha_agent *a, uint64_t now)
         return 0;
     say(a, HA_LOG_INFO, "published discovery: %d sensors%s (%lu bytes)", a->comps.n,
         rem ? ", some removed" : "", (unsigned long)a->doc.len);
+    if (!a->have_published || !ha_model_same(&a->published, &a->comps))
+        a->published_changed = 1;
     a->published = a->comps;
     a->have_published = 1;
     return 1;
@@ -228,4 +231,44 @@ unsigned ha_agent_backoff_ms(const ha_agent *a, unsigned rnd)
     base = steps[i];
     /* up to 20% more, so a broker restart isn't met by every node at once */
     return base + rnd % (base / 5 + 1);
+}
+
+void ha_agent_load_published(ha_agent *a, const char *text, size_t n)
+{
+    size_t i = 0;
+    a->published.n = 0;
+    while (i < n && a->published.n < HA_MAX_COMP) {
+        const char *s = text + i;
+        size_t len = 0;
+        struct ha_comp *c;
+        while (i + len < n && text[i + len] != '\n')
+            len++;
+        i += len + 1;
+        ha_trim(&s, &len);
+        if (len == 0 || len >= HA_KEY)
+            continue;
+        c = &a->published.c[a->published.n++];
+        memset(c, 0, sizeof *c);
+        ha_strlcpyn(c->key, sizeof c->key, s, len);
+        c->platform = "sensor";         /* the only platform so far */
+        c->precision = -1;
+    }
+    a->have_published = a->published.n > 0;
+}
+
+int ha_agent_published_changed(ha_agent *a)
+{
+    int c = a->published_changed;
+    a->published_changed = 0;
+    return c;
+}
+
+void ha_agent_published_text(const ha_agent *a, ha_buf *out)
+{
+    int i;
+    ha_buf_clear(out);
+    for (i = 0; i < a->published.n; i++) {
+        ha_buf_puts(out, a->published.c[i].key);
+        ha_buf_putc(out, '\n');
+    }
 }

@@ -50,6 +50,7 @@ typedef struct ha_agent {
     int have_published;
     struct ha_comp_set removed;
 
+    int published_changed;              /* the caller should save the key list */
     int seen_online;                    /* sess.ha_online already handled */
     unsigned failures;                  /* connection attempts in a row that failed */
     uint64_t up_since;
@@ -90,5 +91,13 @@ int ha_agent_pending(const ha_agent *a);
 void ha_agent_closed(ha_agent *a, uint64_t now);
 /* the wait before the next attempt; rnd is any random number (jitter) */
 unsigned ha_agent_backoff_ms(const ha_agent *a, unsigned rnd);
+
+/* The sensor keys published last, one per line, kept by the caller in DATA_DIR,
+   so that a sensor gone while the agent was stopped (a dismounted disk) is
+   still removed from HA.  Load before the first connection; save whenever
+   ha_agent_published_changed returns 1. */
+void ha_agent_load_published(ha_agent *a, const char *text, size_t n);
+int ha_agent_published_changed(ha_agent *a);
+void ha_agent_published_text(const ha_agent *a, ha_buf *out);
 
 #endif
