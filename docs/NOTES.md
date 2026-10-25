@@ -185,10 +185,24 @@ batch logs (AGENT_RUN.LOG on each node).
   which applies the rule for the boot date. `probes/boot_probe.c` showed it right on
   both nodes (x86 15:48:29Z where the old sum gave 16:48:29Z; IA64 22:18:20Z), and
   for dates either side of the change. `--print` from the new build agrees.
-- **IA64 did not change its clock:** at 22:34 UTC it showed 23:34 with
-  `SYS$TIMEZONE_DIFFERENTIAL` 3600 (BST), so its `booted` did not move. The C RTL's
+- **IA64 changed its clock 21 hours late:** at 22:34 UTC it still showed 23:34
+  with `SYS$TIMEZONE_DIFFERENTIAL` 3600 (BST); by 22:56 UTC it showed GMT, offset 0
+  (not done by us). The fixed agent was running by then, and `booted` stayed at
+  22:18:20Z through the change. The C RTL's
   `time()` and `localtime()` still give the right UTC and GMT, because they follow
   `SYS$TIMEZONE_RULE`. Both nodes' rule is `GMT0BST^1,M3.5.0/01,M10.4.0/02`: the
   4th Sunday of October, not the last (it happened to be the same day in 2026).
 - The agents' log timestamps are local time without a zone, so they jumped back an
   hour at 01:00 UTC on x86 and followed the C RTL rule on IA64.
+
+## 11. Phase 3 live in HA (2026-10-25)
+
+- Both agents restarted on the Phase 3 build at 22:45 (x86) and 22:47 UTC
+  (IA64). HA has every sensor `tools/dashboard.py` names: 123 entities, none
+  missing and none extra. Every disk and queue problem sensor is off.
+- `probes/queue_live.com` (in batch, needs OPER) created a queue HASS_TEST, held it
+  idle, stopped with a job pending, started, then deleted it, 90 s per state. In HA's
+  history, on both nodes: the problem sensor went off, on, off, the state went
+  idle, stopped, idle, and pending 0, 1, 0, each about 8 s after the change on the
+  node. Deleting the queue removed its four entities from HA (none left in a
+  search afterwards), and the procedure removed its job file and log.

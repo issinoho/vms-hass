@@ -1,8 +1,8 @@
 # Phase 3: VMS-specific state
 
-**Status:** in progress. Built, and tested on Linux and on both nodes with
-`--print`. Still to do: run it live in HA (after Phase 2's history check, so the
-running agents are not interrupted), and update the dashboard (with the user's OK).
+**Status:** live on both nodes, and the exit test passed in HA (NOTES.md 11).
+Still to do: put the new dashboard on HA (generated and checked; the write needs
+the user's permission), then the user's exit review.
 
 ## What was built (D8)
 
@@ -25,7 +25,7 @@ now records each key's platform, so binary sensors are removed as binary sensors
 | `make fuzz` | no findings |
 | `make integration` | 47 passed, 0 failed |
 | A real queue stopped, started, paused, deleted (both nodes) | the agent agreed with SHOW QUEUE at every step (NOTES.md 9) |
-| Live in HA | *to do* |
+| Live in HA, both nodes | a test queue's problem sensor went off, on, off; its entities were removed when the queue was deleted (NOTES.md 11) |
 
 The integration test drives the stub through each problem sensor: a queue stopped
 and started, disk errors rising, a shadow set losing a member, copying it back
