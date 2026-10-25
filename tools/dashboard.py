@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """dashboard.py - build an HA dashboard config for vms-hass nodes.
 
-    tools/dashboard.py <entity-prefix>:<disk,disk>:<nic,nic> ... > dashboard.json
+    tools/dashboard.py <entity-prefix>:<disk,disk>:<nic,nic>[:<queue,queue>] ... > dashboard.json
 
 <entity-prefix> is the node's entity ID stem as HA made it from the device name
 (device "X86VMS" -> "x86vms"); disks and NICs are slugged device names as in the
-entity IDs ("dka0", "ewb0").  Example:
+entity IDs ("dka0", "ewb0"), and so are queues ("SYS$BATCH" -> "sys_batch").
+Example:
 
-    tools/dashboard.py x86vms:dka0,dka200,dka300,ldm2585:eia0 myi64:dka800:ewb0
+    tools/dashboard.py x86vms:dka0,dka200,dka300,ldm2585:eia0:sys_batch,x86vms_batch \
+                       myi64:dka800:ewb0:sys_batch,canon
 
 The output is a sections-view config: an overview of every node, then one view
 per node with all of its sensors.  It holds no addresses or credentials.
@@ -71,7 +73,17 @@ def heading(text, icon, sub=False, badges=None):
     return h
 
 
-def overview_section(e, name, disks, path):
+def problems(e, disks, queues):
+    """every problem sensor of the node, shown only while one is on"""
+    b = "binary_sensor." + e
+    ents = [b + "_" + d + "_problem" for d in disks] + [b + "_" + q + "_problem" for q in queues]
+    return {"type": "entity-filter", "entities": ents,
+            "conditions": [{"condition": "state", "state": "on"}],
+            "card": {"type": "entities", "title": "Problems", "state_color": True},
+            "show_empty": False, "grid_options": {"columns": "full"}}
+
+
+def overview_section(e, name, disks, queues, path):
     s = "sensor." + e
     return {"type": "grid", "cards": [
         heading(name, "mdi:server", badges=[
@@ -79,6 +91,7 @@ def overview_section(e, name, disks, path):
             {"type": "entity", "entity": s + "_active_cpus", "show_state": True}],
         ) | {"tap_action": {"action": "navigate", "navigation_path": path}},
         summary(s),
+        problems(e, disks, queues),
         gauge(s + "_cpu", "CPU"),
         gauge(s + "_memory_used", "Memory"),
         gauge(s + "_" + disks[0] + "_used", disks[0].upper()),
@@ -92,8 +105,9 @@ def overview_section(e, name, disks, path):
     ]}
 
 
-def node_view(e, name, disks, nics):
+def node_view(e, name, disks, nics, queues):
     s = "sensor." + e
+    b = "binary_sensor." + e
     cpu = [heading("CPU", "mdi:cpu-64-bit"),
            gauge(s + "_cpu", "Busy", 6),
            tile(s + "_compute_queue", "Compute queue", 6, trend=True)]
@@ -113,7 +127,9 @@ def node_view(e, name, disks, nics):
         dsk += [heading(d.upper(), "mdi:harddisk", sub=True),
                 gauge(s + "_" + d + "_used", "Used", 4),
                 tile(s + "_" + d + "_free", "Free", 4),
-                tile(s + "_" + d + "_size", "Size", 4)]
+                tile(s + "_" + d + "_size", "Size", 4),
+                tile(b + "_" + d + "_problem", "Problem", 6),
+                tile(s + "_" + d + "_errors", "Errors", 6)]
     dsk.append(graph([{"entity": s + "_" + d + "_used", "name": d.upper()} for d in disks], hours=168))
     net = [heading("Network", "mdi:lan")]
     for n in nics:
@@ -121,13 +137,19 @@ def node_view(e, name, disks, nics):
                 tile(s + "_" + n + "_transmit", n.upper() + " transmit", 6, trend=True)]
     net.append(graph([x for n in nics for x in
                       ({"entity": s + "_" + n + "_receive"}, {"entity": s + "_" + n + "_transmit"})], rows=3))
+    que = [heading("Queues", "mdi:tray-full")]
+    for q in queues:
+        que += [tile(s + "_" + q, None, 6),
+                tile(b + "_" + q + "_problem", "Problem", 6),
+                tile(s + "_" + q + "_pending", "Pending", 6),
+                tile(s + "_" + q + "_executing", "Executing", 6)]
     system = [heading("System", "mdi:server"), summary(s),
               tile(s + "_processes", "Processes", 6, trend=True),
               tile(s + "_interactive_users", "Interactive users", 6, trend=True),
               tile(s + "_booted", "Booted", 6),
               tile(s + "_active_cpus", "Active CPUs", 6)]
     return {"title": name, "path": e, "type": "sections", "icon": "mdi:server", "max_columns": 3,
-            "sections": [{"type": "grid", "cards": c} for c in (system, cpu, mem, dsk, net)]}
+            "sections": [{"type": "grid", "cards": c} for c in (system, cpu, mem, dsk, net, que) if len(c) > 1]}
 
 
 def main(argv):
@@ -135,17 +157,18 @@ def main(argv):
         sys.exit(__doc__)
     nodes = []
     for a in argv:
-        e, disks, nics = a.split(":")
-        nodes.append((e, e.upper(), [d for d in disks.split(",") if d], [n for n in nics.split(",") if n]))
+        e, disks, nics, queues = (a.split(":") + [""])[:4]
+        nodes.append((e, e.upper(), [d for d in disks.split(",") if d], [n for n in nics.split(",") if n],
+                      [q for q in queues.split(",") if q]))
     overview = {"title": "Overview", "path": "overview", "type": "sections", "icon": "mdi:view-dashboard",
                 "max_columns": max(2, len(nodes)),
-                "sections": [overview_section(e, n, d, "/openvms-servers/" + e) for e, n, d, _ in nodes]}
+                "sections": [overview_section(e, n, d, q, "/openvms-servers/" + e) for e, n, d, _, q in nodes]}
     overview["sections"].append({"type": "grid", "column_span": max(2, len(nodes)), "cards": [
         heading("All nodes", "mdi:chart-line"),
-        graph([{"entity": "sensor." + e + "_cpu", "name": n + " CPU"} for e, n, _, _ in nodes], rows=3),
-        graph([{"entity": "sensor." + e + "_memory_used", "name": n + " memory"} for e, n, _, _ in nodes], rows=3),
+        graph([{"entity": "sensor." + e + "_cpu", "name": n + " CPU"} for e, n, _, _, _ in nodes], rows=3),
+        graph([{"entity": "sensor." + e + "_memory_used", "name": n + " memory"} for e, n, _, _, _ in nodes], rows=3),
     ]})
-    config = {"views": [overview] + [node_view(e, n, d, ni) for e, n, d, ni in nodes]}
+    config = {"views": [overview] + [node_view(e, n, d, ni, q) for e, n, d, ni, q in nodes]}
     json.dump(config, sys.stdout, ensure_ascii=False)
 
 
