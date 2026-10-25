@@ -71,6 +71,30 @@ static void say(int level, const char *fmt, ...);
 
 /* ---- time ---- */
 
+/* SYI$_BOOTTIME is local time. mktime() applies the C RTL's
+   SYS$TIMEZONE_RULE for the boot date, so a DST change since boot doesn't
+   move it, as "time() minus the local uptime" did (NOTES.md 10). Seconds
+   only, so the value never jitters. Now if unknown, as before. */
+static int64_t boot_utc(uint64_t boot)
+{
+    unsigned short n[7];
+    struct tm t;
+    time_t u;
+
+    if (!boot || !(sys$numtim(n, (void *)&boot) & 1))
+        return (int64_t)time(NULL);
+    memset(&t, 0, sizeof t);
+    t.tm_year = n[0] - 1900;
+    t.tm_mon = n[1] - 1;
+    t.tm_mday = n[2];
+    t.tm_hour = n[3];
+    t.tm_min = n[4];
+    t.tm_sec = n[5];
+    t.tm_isdst = -1;
+    u = mktime(&t);
+    return (int64_t)(u == (time_t)-1 ? time(NULL) : u);
+}
+
 static uint64_t vms_time(void)
 {
     uint64_t q;
@@ -845,7 +869,7 @@ int ha_plat_sample(struct ha_sample *s)
     static unsigned char modes[4 + MAX_CPU * 33 + 512];
     static int warned_cpus;
     unsigned int ncpu = 0, i;
-    uint64_t memsize = 0, now, boot = 0;
+    uint64_t memsize = 0, boot = 0;
     unsigned int pf_page = 0, pf_free = 0, sw_page = 0, sw_free = 0;
     memset(s, 0, sizeof *s);
 
@@ -905,11 +929,8 @@ int ha_plat_sample(struct ha_sample *s)
     s->swap_total = (uint64_t)sw_page * page_size;
     s->swap_free = (uint64_t)(sw_free < sw_page ? sw_free : sw_page) * page_size;
 
-    /* boot time as Unix time: VMS keeps local time, so take the uptime and
-       count back from time(), which is UTC */
     syi(SYI$_BOOTTIME, &boot, 8, NULL);
-    now = vms_time();
-    s->boot_time = (int64_t)time(NULL) - (int64_t)(now > boot && boot ? (now - boot) / 10000000 : 0);
+    s->boot_time = boot_utc(boot);
 
     s->processes = (int)rmi_u(RMI$_PROCS, 4);
     s->compute_queue = (double)(rmi_u(RMI$_COM, 4) + rmi_u(RMI$_COMO, 4));

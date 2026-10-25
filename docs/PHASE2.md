@@ -1,8 +1,8 @@
 # Phase 2: the VMS agent
 
 **Status:** checked against DCL on both nodes, and a day of history checked
-(NOTES.md 10). One bug found: `booted` moved by an hour at the DST change. Waiting
-for the user's exit review.
+(NOTES.md 10). One bug found and fixed: `booted` moved by an hour at the DST
+change. Waiting for the user's exit review.
 
 ## What was built
 
@@ -39,7 +39,7 @@ None of the sources it reads needs a privilege:
 | Both nodes in HA, run with only NETMBX and TMPMBX | yes: x86vms and myi64 |
 | Agent killed | HA marked the node unavailable in 2 s (x86) and 10 s (IA64) |
 | A day of history | complete, 23 hourly rows per node; every outage was the broker's, and the agents recovered alone (NOTES.md 10) |
-| DST change (x86, 01:00 UTC) | **bug:** `booted` moved an hour later |
+| DST change (x86, 01:00 UTC) | `booted` moved an hour later; fixed with `mktime()`, `--print` right on both nodes (the running agents still have the old build) |
 
 Checked against DCL:
 - memory used agrees with SHOW MEMORY's "In Use"

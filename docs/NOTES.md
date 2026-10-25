@@ -181,6 +181,10 @@ batch logs (AGENT_RUN.LOG on each node).
   uptime (2 06:45:30 at 22:34 GMT) is still right.
 - **The same arithmetic makes `booted` jitter by a second** (…:29 / …:30), a few
   state changes a day for a value that never changes.
+- **Fixed:** the agent now converts SYI$_BOOTTIME with `mktime()` (`tm_isdst` -1),
+  which applies the rule for the boot date. `probes/boot_probe.c` showed it right on
+  both nodes (x86 15:48:29Z where the old sum gave 16:48:29Z; IA64 22:18:20Z), and
+  for dates either side of the change. `--print` from the new build agrees.
 - **IA64 did not change its clock:** at 22:34 UTC it showed 23:34 with
   `SYS$TIMEZONE_DIFFERENTIAL` 3600 (BST), so its `booted` did not move. The C RTL's
   `time()` and `localtime()` still give the right UTC and GMT, because they follow
