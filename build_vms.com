@@ -3,7 +3,8 @@ $!
 $!   @build_vms [TEST]
 $!
 $! Builds [.BUILD]HASS_AGENT.EXE (the core, the OpenSSL network code, the VMS
-$! platform layer) and [.BUILD]TEST_CORE.EXE; TEST runs the unit tests.
+$! platform layer), [.BUILD]HASS_LAUNCH.EXE (starts the agent as its account,
+$! D9) and [.BUILD]TEST_CORE.EXE; TEST runs the unit tests.
 $! Qualifiers as vms-beszel's: C99, 32-bit pointers, PREFIX=ALL_ENTRIES so the
 $! socket calls link (NOTES.md 2), BSD 4.4 sockaddr.
 $ set noon
@@ -30,7 +31,7 @@ $ failed = 0
 $ sources = "[.src.core]ha_buf,[.src.core]ha_text,[.src.core]ha_json,[.src.core]ha_mqtt," + -
             "[.src.core]ha_conf,[.src.core]ha_model,[.src.core]ha_sess,[.src.core]ha_agent," + -
             "[.src.plat]ha_net_ossl,[.src.plat.vms]ha_plat_vms,[.src.main]ha_main," + -
-            "[.tests.unit]test_core"
+            "[.src.plat.vms]ha_launch,[.tests.unit]test_core"
 $ i = 0
 $cc_loop:
 $ s = f$element(i, ",", sources)
@@ -67,6 +68,12 @@ $ link/executable=[.build]hass_agent.exe 'core',[.build]ha_net_ossl,[.build]ha_p
 $ if $severity .ne. 1
 $ then
 $   say "BUILD-FAIL: link hass_agent"
+$   exit 44
+$ endif
+$ link/executable=[.build]hass_launch.exe [.build]ha_launch
+$ if $severity .ne. 1
+$ then
+$   say "BUILD-FAIL: link hass_launch"
 $   exit 44
 $ endif
 $ say "BUILD-OK"

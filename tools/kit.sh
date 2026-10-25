@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# kit.sh <node> - build the agent on <node>, run its native tests, make the PCSI
+# kit there and fetch it to out/kits/, with SHA256SUMS.
+#
+# The versions come from src/core/ha_version.h alone; MAKE_KIT.COM refuses to
+# package an image that reports a different one.
+set -euo pipefail
+
+top=$(cd "$(dirname "$0")/.." && pwd)
+node=${1:?usage: kit.sh <node>}
+: "${KIT_PRODUCER:=ISSINOHO}"
+KIT_PRODUCT=HASS
+version=$(sed -n 's/^#define HA_VERSION *"\(.*\)"/\1/p' "$top/src/core/ha_version.h")
+pcsiversion=$(sed -n 's/^#define HA_PCSI_VERSION *"\(.*\)"/\1/p' "$top/src/core/ha_version.h")
+[ -n "$version" ] && [ -n "$pcsiversion" ] || { echo "kit: no version in ha_version.h" >&2; exit 1; }
+read -r _ ARCH _ _ _ _ _ < <(awk -v n="$node" '$1==n' "$top/tools/nodes.conf")
+case $ARCH in [Xx]86*) base=X86VMS; archname=x86-64 ;; *) base=I64VMS; archname=Integrity ;; esac
+# One kit at a time: every build shares out/kitstage.
+mkdir -p "$top/out"; exec 9> "$top/out/.kit.lock"
+flock -n 9 || { echo "kit: another kit.sh is running (out/kitstage is shared)" >&2; exit 1; }
+
+# Generated kit inputs: never committed (they carry the version), uploaded to [.KIT].
+stage=$top/out/kitstage
+rm -rf "$stage"; mkdir -p "$stage" "$top/out/kits"
+subst() { sed -e "s/@PRODUCER@/$KIT_PRODUCER/g" -e "s/@BASE@/$base/g" \
+              -e "s/@PCSIVERSION@/$pcsiversion/g" -e "s/@VERSION@/$version/g" -e "s/@ARCH@/$archname/g"; }
+subst < "$top/kit/hass.pcsi\$desc_template" > "$stage/PRODUCT-$base.PCSI\$DESC"
+subst < "$top/kit/hass.pcsi\$text_template" > "$stage/PRODUCT-$base.PCSI\$TEXT"
+subst < "$top/kit/readme.vms" > "$stage/README.VMS"
+printf 'KIT_PRODUCER=%s\nKIT_PRODUCT=%s\nPCSI_VERSION=%s\nKIT_VERSION=%s\n' \
+    "$KIT_PRODUCER" "$KIT_PRODUCT" "$pcsiversion" "$version" > "$stage/KIT.ENV"
+
+echo "kit: vms-hass agent $version ($KIT_PRODUCER $base $KIT_PRODUCT $pcsiversion) on $node"
+"$top/tools/push.sh" "$node" > /dev/null
+"$top/tools/vms.sh" "$node" put "$top/LICENSE" > /dev/null 2>&1 || true
+"$top/tools/vms.sh" "$node" put "$top/vms/agent.conf_template" "$top/vms/hass\$control.com" \
+    "$top/vms/hass\$run.com" -- vms > /dev/null 2>&1 || true
+"$top/tools/vms.sh" "$node" put "$stage"/* "$top/kit/make_kit.com" "$top/kit/hass\$configure.com" \
+    "$top/kit/hass\$startup.com" "$top/kit/hass\$shutdown.com" -- kit > /dev/null 2>&1 || true
+VMS_TIMEOUT=900 "$top/tools/vms.sh" "$node" dcl '@build_vms TEST' > "$top/out/kit-build-$node.log" 2>&1
+grep -q '0 failed' "$top/out/kit-build-$node.log" && grep -q 'BUILD-OK' "$top/out/kit-build-$node.log" ||
+    { tail -20 "$top/out/kit-build-$node.log"; echo "kit: build or native tests failed" >&2; exit 1; }
+grep -E 'checks' "$top/out/kit-build-$node.log" || true
+VMS_TIMEOUT=900 "$top/tools/vms.sh" "$node" dcl '@[.kit]make_kit' | tee "$top/out/kit-$node.log"
+kit=$(sed -n 's/^MAKE_KIT: kit .*\]\([^;]*\);.*/\1/p' "$top/out/kit-$node.log" | head -1)
+[ -n "$kit" ] || { echo "kit: no kit produced (see out/kit-$node.log)" >&2; exit 1; }
+arch=$("$top/tools/vms.sh" "$node" dcl 'write sys$output f$edit(f$getsyi("ARCH_NAME"),"UPCASE")' | tr -d '\r' | grep -E '^[A-Z0-9_]+$' | head -1)
+rm -f "$top/out/kits/$kit"     # so a failed fetch can't leave the previous kit in SHA256SUMS
+"$top/tools/vms.sh" "$node" get "KIT_$arch/$kit" "$top/out/kits/$kit"
+[ -s "$top/out/kits/$kit" ] || { echo "kit: couldn't fetch $kit from $node" >&2; exit 1; }
+(cd "$top/out/kits" && sha256sum ISSINOHO-*-HASS-*.PCSI > SHA256SUMS && cat SHA256SUMS)

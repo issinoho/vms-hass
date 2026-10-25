@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
@@ -368,4 +369,9 @@ void ha_net_close(ha_sock *s)
     if (s->fd >= 0)
         close(s->fd);
     free(s);
+}
+
+int ha_net_random(void *p, size_t n)
+{
+    return RAND_bytes(p, (int)n) == 1;
 }

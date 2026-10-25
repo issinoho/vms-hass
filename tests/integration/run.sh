@@ -214,6 +214,27 @@ stop_agent
 check "and the saved list no longer has them" sh -c "! grep -q dka100 data/published"
 echo 'cpu 20' > control
 
+echo "== orderly stop (the stop file, as HASS\$CONTROL STOP)"
+: > data/stop
+start_agent agent2c.log a.conf
+check "an old stop request is removed at start" wait_for 10 grep -q 'removing an old stop request' agent2c.log
+check "and the agent connects" wait_for 10 grep -q 'connected to the broker' agent2c.log
+: > data/stop
+wait_for 5 sh -c "! kill -0 $agent_pid 2>/dev/null"
+wait "$agent_pid"; rc=$?; agent_pid=
+check "it stops, exit status 0" test $rc -eq 0
+check "and says why" grep -q 'stop requested' agent2c.log
+check "availability offline" test "$(S -t "$AVAIL_T" -C 1 -W 3)" = offline
+check "the stop file is gone" test ! -e data/stop
+
+echo "== plain MQTT to another machine (D10)"
+conf f.conf "MQTT_HOST=192.0.2.1" "DATA_DIR=$w/data3"
+mkdir -p data3
+start_agent agent9.log f.conf
+check "warns that MQTT_TLS is off" wait_for 5 grep -q 'MQTT_TLS is off: the broker password' agent9.log
+stop_agent
+check "no such warning for a broker on this machine" sh -c "! grep -q 'MQTT_TLS is off' agent1.log"
+
 echo "== --remove"
 HA_STUB_CONTROL=$w/control "$AGENT" --remove a.conf > remove.log 2>&1; rc=$?
 check "exit status 0" test $rc -eq 0

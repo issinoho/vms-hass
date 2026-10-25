@@ -1,0 +1,28 @@
+=product @PRODUCER@ @BASE@ HASS @PCSIVERSION@ full
+1 'PRODUCER
+=prompt @PRODUCER@
+1 'PRODUCT
+=prompt vms-hass agent @VERSION@ for OpenVMS: publishes this system to Home Assistant over MQTT
+1 'NOTICE
+=prompt The vms-hass agent for OpenVMS is distributed under the MIT licence.
+1 RELEASE_NOTES
+=prompt Documentation is in [HASS.DOC]README.VMS under the installation directory.
+1 POST_INSTALL
+=prompt Post-installation tasks for the vms-hass agent
+    Once, as SYSTEM: create or check the agent's account (default HASS, with a
+    UIC group of its own above MAXSYSGROUP), set the protections, and create
+    HASS$ROOT:[CONF]AGENT.CONF from its template:
+    $ @HASS$ROOT:[COM]HASS$CONFIGURE
+    Put the broker's address and user in HASS$ROOT:[CONF]AGENT.CONF, and the
+    user's password in HASS$ROOT:[CONF]MQTT.PWD; run HASS$CONFIGURE again
+    to protect both, then:
+    $ @HASS$ROOT:[COM]HASS$CONTROL START
+    At boot, add to SYS$MANAGER:SYSTARTUP_VMS.COM (after TCP/IP):
+    $ @SYS$STARTUP:HASS$STARTUP.COM
+    At shutdown, add to SYS$MANAGER:SYSHUTDWN.COM:
+    $ @SYS$STARTUP:HASS$SHUTDOWN.COM
+
+PRODUCT REMOVE HASS stops the agent and deassigns HASS$ROOT; the
+configuration, the password file, the node ID, the logs and the account
+are kept, and so is the device in Home Assistant (HASS_AGENT --REMOVE
+removes it first, if you want that).

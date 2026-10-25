@@ -1,0 +1,94 @@
+vms-hass agent @VERSION@ for OpenVMS (@ARCH@)
+================================================
+
+Publishes this OpenVMS system to Home Assistant over MQTT: CPU and its modes,
+memory, page and swap files, disks, network, processes and users, print and
+batch queues, disk errors, shadow sets and cluster membership.  Home Assistant
+finds it by MQTT discovery and shows it as a device, with history, dashboards
+and automations; "problem" sensors (a stopped queue, a degraded shadow set,
+disk errors) are ready for alerts.  The agent connects out to the broker;
+nothing listens on this system.  It runs as its own unprivileged account
+(NETMBX and TMPMBX only) and refuses to run as SYSTEM or with privileges.
+
+Requires: OpenVMS x86-64 (tested on E9.2-4) or Integrity (tested on
+V8.4-2L3), VSI TCP/IP Services, VSI's SSL3 kit, and an MQTT broker that
+Home Assistant uses (for example HA's Mosquitto app and MQTT integration).
+
+Setting up (as SYSTEM)
+----------------------
+1. In Home Assistant, make an MQTT user for the agent.  With the Mosquitto
+   app, an HA user (Settings, People, Users) will do.
+
+2. Create the agent's account and set the protections, once:
+
+     $ @HASS$ROOT:[COM]HASS$CONFIGURE
+
+   It asks for the account (default HASS) and, for a new account, its UIC:
+   choose a group of its own, above MAXSYSGROUP (e.g. [376,1]).  The account
+   gets NETMBX and TMPMBX only and can't log in by any route; the agent still
+   runs as it.  Run it again at any time: it changes only an account it
+   created.
+
+3. Edit HASS$ROOT:[CONF]AGENT.CONF (made from AGENT.CONF_TEMPLATE, which
+   explains every setting).  Two are needed:
+
+     MQTT_HOST=<the broker's address>
+     MQTT_USER=<the MQTT user>
+
+   Put the user's password, alone on one line, in HASS$ROOT:[CONF]MQTT.PWD.
+   Then run HASS$CONFIGURE again: it makes both files the account's and
+   readable by it only (the agent refuses a password file others can read).
+
+   Check what it would publish, without connecting:
+
+     $ AGENT := $HASS$ROOT:[BIN]HASS_AGENT.EXE
+     $ AGENT --PRINT
+
+4. Start it:
+
+     $ @HASS$ROOT:[COM]HASS$CONTROL START
+
+   Within a minute the node appears in Home Assistant under Settings,
+   Devices & services, MQTT.  STOP, RESTART (after changing AGENT.CONF) and
+   STATUS work the same way.
+
+5. At boot and shutdown, add to SYS$MANAGER:SYSTARTUP_VMS.COM (after TCP/IP)
+   and SYS$MANAGER:SYSHUTDWN.COM:
+
+     $ @SYS$STARTUP:HASS$STARTUP.COM
+     $ @SYS$STARTUP:HASS$SHUTDOWN.COM
+
+Without TLS (MQTT_TLS), the password and the readings cross the network
+unencrypted, and the agent says so in its log at every start.  To use TLS,
+give the broker a certificate (in the Mosquitto app: certfile and keyfile),
+set MQTT_TLS=yes, and, for a certificate from your own CA, name the CA's
+certificate in MQTT_CA_FILE.
+
+Files
+-----
+  HASS$ROOT:[BIN]    HASS_AGENT.EXE, and HASS_LAUNCH.EXE (starts the agent as
+                     its account)
+  HASS$ROOT:[COM]    HASS$CONTROL.COM, HASS$RUN.COM (restarts the agent if it
+                     stops), HASS$CONFIGURE.COM
+  HASS$ROOT:[CONF]   AGENT.CONF, AGENT.CONF_TEMPLATE, MQTT.PWD
+  HASS$ROOT:[DATA]   NODE_ID. (this node's identity in Home Assistant: don't
+                     delete it, or HA sees a new device) and PUBLISHED. (the
+                     sensors last published)
+  HASS$ROOT:[LOG]    HASS_AGENT.LOG (five versions kept)
+  SYS$MANAGER:HASS$CONFIG.COM   the account, and whether to start at boot
+
+PRODUCT REMOVE HASS stops the agent and deassigns HASS$ROOT and HASS$USER.
+AGENT.CONF, MQTT.PWD, the node ID, the logs, the site settings and the account
+are kept, so a reinstall carries on where it left off.  The device stays in
+Home Assistant, shown as unavailable; to remove it from HA as well, first:
+
+     $ AGENT := $HASS$ROOT:[BIN]HASS_AGENT.EXE
+     $ AGENT --REMOVE
+
+When it doesn't connect, HASS$ROOT:[LOG]HASS_AGENT.LOG says why.  The
+messages are explained at https://github.com/issinoho/vms-hass.
+
+The vms-hass agent for OpenVMS is distributed under the MIT licence; see
+[HASS.DOC]LICENSE.  Home Assistant is a project of the Open Home Foundation;
+this project is not affiliated with it.  OpenVMS is a trademark of VMS
+Software, Inc.

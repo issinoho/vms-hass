@@ -5,9 +5,15 @@
  *   hass_agent --print [config-file]   print the discovery and state documents
  *                                      from two samples, without connecting
  *   hass_agent --version
+ *   hass_agent --random                print 32 random letters and digits (a password
+ *                                      for the agent's account, which nobody types)
  *
  * Settings: docs/CONFIG.md.  All protocol logic is in src/core; this file only
  * moves bytes between the socket and ha_agent, and keeps the time.
+ *
+ * Running, it stops cleanly (offline published, connection closed) on SIGINT
+ * or SIGTERM, or when the file "stop" appears in DATA_DIR
+ * (HASS$ROOT:[DATA]STOP. on OpenVMS, made by HASS$CONTROL STOP).
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -22,6 +28,7 @@
 
 #define CONNECT_TIMEOUT_MS 15000
 #define WAIT_SLICE_MS 1000              /* how often the stop request is checked */
+#define HA_EXIT_REFUSED 44              /* SS$_ABORT: HASS$RUN.COM does not restart (D9) */
 
 static int min_level = HA_LOG_INFO;
 
@@ -147,6 +154,12 @@ static int pump(ha_agent *a, ha_sock *s, unsigned wait_ms)
     return 1;
 }
 
+/* the broker is on this machine, so plain MQTT never crosses a network */
+static int loopback(const char *h)
+{
+    return ha_ieq(h, "localhost") || strncmp(h, "127.", 4) == 0 || strcmp(h, "::1") == 0;
+}
+
 static int print_mode(const struct ha_agent_cfg *cfg, const struct ha_identity *id)
 {
     static struct ha_sample s1, s2;
@@ -185,7 +198,7 @@ int main(int argc, char **argv)
     static struct ha_identity id;
     static struct ha_sample sample;
     static char nid[64], dev_name[64], client_id[96], port[24], status_topic[128];
-    static char published_path[1100];
+    static char published_path[1100], stop_path[1100];
     ha_conf conf;
     ha_buf file, pw;
     char err[300];
@@ -198,6 +211,22 @@ int main(int argc, char **argv)
 
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
         printf("hass_agent %s\n", HA_VERSION);
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--random") == 0) {
+        /* letters and digits only: a VMS password, never typed by anyone */
+        static const char set[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        unsigned char r[32];
+        char word[33];
+        int i;
+        if (!ha_net_random(r, sizeof r))
+            return 1;
+        for (i = 0; i < 32; i++)
+            word[i] = set[r[i] % 36];         /* 256 % 36 = 4: a tiny bias, harmless here */
+        word[32] = 0;
+        printf("%s\n", word);
+        memset(r, 0, sizeof r);
+        memset(word, 0, sizeof word);
         return 0;
     }
     if (argc > argi && strcmp(argv[argi], "--remove") == 0) {
@@ -322,15 +351,34 @@ int main(int argc, char **argv)
     if (print_only)
         { rc = print_mode(&cfg, &id); goto out; }
 
+    if (!remove_mode && !ha_plat_check_account(err, sizeof err)) {
+        say(HA_LOG_ERROR, "%s", err);       /* D9: no privileges, no system account */
+        rc = HA_EXIT_REFUSED;
+        goto out;
+    }
+    ha_plat_data_path(stop_path, sizeof stop_path, dir, "stop");
+    if (!remove_mode && ha_plat_exists(stop_path)) {
+        say(HA_LOG_INFO, "removing an old stop request %s", stop_path);
+        ha_plat_remove(stop_path);
+    }
+
     ha_agent_init(&agent, &cfg, &id, log_cb, NULL, ha_plat_now_ms());
     ha_plat_data_path(published_path, sizeof published_path, dir, "published");
     if (ha_plat_read_file(published_path, &file))
         ha_agent_load_published(&agent, (const char *)file.p, file.len);
     say(HA_LOG_INFO, "hass_agent %s: node %s as \"%s\", broker %s:%s%s, every %ld s",
         HA_VERSION, nid, dev_name, host, port, tls ? " (TLS)" : "", interval);
+    if (!tls && !loopback(host))        /* D10 */
+        say(HA_LOG_WARN, "MQTT_TLS is off: %s and every reading cross the network unencrypted",
+            *user ? "the broker password" : "the broker connection");
 
     while (!ha_plat_stop_requested()) {
         uint64_t now = ha_plat_now_ms(), wait;
+        if (!remove_mode && ha_plat_exists(stop_path)) {
+            say(HA_LOG_INFO, "stop requested (%s)", stop_path);
+            ha_plat_remove(stop_path);
+            break;
+        }
         ha_plat_poll();
         if (!sock && now >= retry_at) {
             sock = ha_net_open(host, port, tls, *ca ? ca : NULL, CONNECT_TIMEOUT_MS,

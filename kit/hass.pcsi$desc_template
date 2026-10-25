@@ -1,0 +1,40 @@
+--
+-- PCSI product description for the vms-hass agent for OpenVMS (from vms-beszel's).
+-- Template: tools/kit.sh substitutes @PRODUCER@, @BASE@ and @PCSIVERSION@.
+--
+product @PRODUCER@ @BASE@ HASS @PCSIVERSION@ full ;
+
+    -- The agent links VSI's OpenSSL 3.0 shared images (SSL3$LIBSSL_SHR32,
+    -- SSL3$LIBCRYPTO_SHR32) for TLS to the broker and for random numbers.
+    software VSI @BASE@ SSL3 ;
+
+    information RELEASE_NOTES phase after ;
+
+    directory [HASS] ;
+    directory [HASS.BIN] ;
+    directory [HASS.COM] ;
+    directory [HASS.CONF] ;
+    directory [HASS.DATA] ;
+    directory [HASS.DOC] ;
+    directory [HASS.LOG] ;
+
+    file [HASS.BIN]HASS_AGENT.EXE ;
+    file [HASS.BIN]HASS_LAUNCH.EXE ;
+    file [HASS.COM]HASS$CONTROL.COM ;
+    file [HASS.COM]HASS$RUN.COM ;
+    file [HASS.COM]HASS$CONFIGURE.COM ;
+    file [HASS.CONF]AGENT.CONF_TEMPLATE ;
+    file [HASS.DOC]README.VMS ;
+    file [HASS.DOC]LICENSE. ;
+    file [SYS$STARTUP]HASS$STARTUP.COM ;
+    file [SYS$STARTUP]HASS$SHUTDOWN.COM ;
+
+    -- Define HASS$ROOT now.  AGENT.CONF, MQTT.PWD, the node ID in [DATA] and the
+    -- logs are never part of the kit, so an upgrade or a removal leaves them alone.
+    execute postinstall "@PCSI$DESTINATION:[SYS$STARTUP]HASS$STARTUP.COM INSTALL" interactive ;
+    -- On removal: stop the agent, deassign HASS$ROOT and HASS$USER.
+    execute install "CONTINUE" remove "@PCSI$DESTINATION:[SYS$STARTUP]HASS$STARTUP.COM REMOVE" ;
+
+    information POST_INSTALL phase after ;
+
+end product ;

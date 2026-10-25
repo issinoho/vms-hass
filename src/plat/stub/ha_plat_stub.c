@@ -120,6 +120,11 @@ int ha_plat_exists(const char *path)
     return stat(path, &st) == 0;
 }
 
+int ha_plat_remove(const char *path)
+{
+    return remove(path) == 0 || !ha_plat_exists(path);
+}
+
 int ha_plat_file_exposed(const char *path)
 {
     struct stat st;
@@ -407,4 +412,11 @@ void ha_plat_poll(void)
 int ha_plat_stop_requested(void)
 {
     return stop_flag;
+}
+
+int ha_plat_check_account(char *err, size_t errlen)
+{
+    (void)err;
+    (void)errlen;
+    return 1;                           /* the Linux build is for tests only */
 }

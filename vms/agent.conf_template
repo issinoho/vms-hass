@@ -1,0 +1,56 @@
+# HASS$ROOT:[CONF]AGENT.CONF - settings for the vms-hass agent for OpenVMS.
+#
+# HASS$CONFIGURE makes this file from AGENT.CONF_TEMPLATE.  Fill in MQTT_HOST
+# and MQTT_USER, put the MQTT user's password on one line in
+# HASS$ROOT:[CONF]MQTT.PWD, then run HASS$CONFIGURE again so both files belong
+# to the agent's account and nobody else can read them:
+#
+#     $ @HASS$ROOT:[COM]HASS$CONFIGURE
+#     $ @HASS$ROOT:[COM]HASS$CONTROL START
+#
+# One NAME=value per line; lines starting with # are comments; a value may be
+# put in double quotes.  A name the agent doesn't know is an error, so a typing
+# mistake never goes unnoticed.  Any setting can also come from a logical name
+# HASS$<NAME>, which wins over this file, e.g.
+#     $ DEFINE/SYSTEM HASS$LOG_LEVEL debug
+# Every setting is described in README.VMS.
+
+# ---- the MQTT broker -------------------------------------------------------
+
+# The broker's host name or address.  For Home Assistant's Mosquitto app, this
+# is the address of the machine HA runs on, not HA's web address.
+MQTT_HOST=homeassistant.example.com
+
+# An MQTT user for the agent (in the Mosquitto app: a Home Assistant user, or
+# one in the app's own login list).  Its password goes in MQTT_PASSWORD_FILE.
+MQTT_USER=vms-hass
+MQTT_PASSWORD_FILE=HASS$ROOT:[CONF]MQTT.PWD
+
+# TLS: yes to encrypt the connection (port 8883 by default).  The broker's
+# certificate and name are always checked.  For a certificate from your own
+# CA, put the CA's certificate in a file and name it in MQTT_CA_FILE.  With
+# TLS off, the agent warns at every start, unless the broker is this machine.
+#MQTT_TLS=yes
+#MQTT_CA_FILE=HASS$ROOT:[CONF]BROKER_CA.PEM
+#MQTT_PORT=1883
+
+# ---- what is published -----------------------------------------------------
+
+# Seconds between readings.
+#INTERVAL=30
+
+# Which print and batch queues to report: * for every queue on this node and
+# every generic queue, NONE for none, or a list such as SYS$BATCH,LPA0.
+#QUEUES=*
+
+# The device's name in Home Assistant (default: the node name).
+#DEVICE_NAME=
+
+# Leave these alone unless HA's MQTT integration uses other prefixes.
+#DISCOVERY_PREFIX=homeassistant
+#TOPIC_PREFIX=openvms
+
+# ---- the agent -------------------------------------------------------------
+
+# debug, info, warn or error.
+#LOG_LEVEL=info

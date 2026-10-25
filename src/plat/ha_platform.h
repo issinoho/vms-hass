@@ -24,6 +24,8 @@ int ha_plat_read_file(const char *path, ha_buf *out);
 /* atomically replace a small file, readable by the owner only */
 int ha_plat_write_file(const char *path, const void *p, size_t n);
 int ha_plat_exists(const char *path);
+/* delete it (every version, on OpenVMS); 1 if it is gone */
+int ha_plat_remove(const char *path);
 /* 1 if group or world can read it (the password file must not be) */
 int ha_plat_file_exposed(const char *path);
 /* "<dir>/<name>" in the platform's syntax */
@@ -45,8 +47,13 @@ int ha_plat_sample(struct ha_sample *s);
 /* called about once a second: counters that must be read often (LAN) */
 void ha_plat_poll(void);
 int ha_plat_stop_requested(void);
+/* 0, with the reason, if this process must not run the agent: authorized
+   privileges beyond NETMBX and TMPMBX, or a system-group UIC (D9) */
+int ha_plat_check_account(char *err, size_t errlen);
 
-/* ---- network ---- */
+/* ---- network (ha_net_ossl.c) ---- */
+/* n bytes from OpenSSL's generator: for secrets; 0 on failure */
+int ha_net_random(void *p, size_t n);
 typedef struct ha_sock ha_sock;
 ha_sock *ha_net_open(const char *host, const char *port, int tls, const char *ca_file,
                      unsigned timeout_ms, char *err, size_t errlen);

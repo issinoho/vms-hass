@@ -144,3 +144,41 @@ shows as "Problem"/"OK" and an automation can trigger on it. Each state sensor i
   binary records. The disk error counts cover what an alert needs.
 
 Limits: 32 queues, 16 shadow sets, 400 components per node.
+
+## D9. Run as its own account, started like vms-beszel's agent
+
+**Status:** agreed with the user 2026-10-25 (the account is HASS).
+
+vms-beszel's D12 and D14 apply unchanged, and its procedures are copied (as D4 copied
+the samplers):
+- **The agent refuses to run** if its process is authorized for any privilege beyond
+  NETMBX and TMPMBX, or has a system-group UIC (at or below `MAXSYSGROUP`). It exits
+  with SS$_ABORT, which `HASS$RUN.COM` does not retry. `--print` and `--remove` are
+  one-off commands and skip the check.
+- **The account** (made by `HASS$CONFIGURE`): a UIC group of its own above
+  `MAXSYSGROUP`; NETMBX and TMPMBX; every login class disallowed; DISCTLY, LOCKPWD,
+  `LGICMD NL:`, a random password nobody needs; owner field "vms-hass agent", so the
+  procedure only ever changes an account it made. It owns `[CONF]`, `[DATA]` and
+  `[LOG]`, which nobody else can read.
+- **Starting:** `HASS$CONTROL START` runs `HASS$RUN.COM` as a detached LOGINOUT
+  process, through `HASS_LAUNCH.EXE` (persona) when the caller isn't the account.
+  `HASS$RUN.COM` restarts the agent with a backoff.
+- **Stopping:** `HASS$CONTROL STOP` creates `HASS$ROOT:[DATA]STOP.`; the agent
+  publishes `offline`, disconnects and exits within about a second (longer only while
+  a connect is timing out, at most 15 s), and the procedure stops the process if it
+  hasn't gone in 20 s.
+- **Boot:** the lines in `SYSTARTUP_VMS.COM` and `SYSHUTDWN.COM` are the user's to
+  add, as for beszel.
+
+## D10. Plain MQTT on the LAN for now, with a warning
+
+**Status:** agreed with the user 2026-10-25.
+
+The user's broker has no TLS listener yet (8883 refused, 2026-10-25). The agent
+supports TLS (tested on Linux against Mosquitto, PHASE1.md) and verifies the
+certificate and name. Without TLS, it logs a WARN at every start unless the broker is
+this machine, as vms-beszel D13 does for plain http. TLS on the nodes is tested once
+the user gives the Mosquitto app a certificate.
+
+Alternative: refuse plain MQTT except to loopback. Rejected for now: it would need the
+certificate before anything could run.

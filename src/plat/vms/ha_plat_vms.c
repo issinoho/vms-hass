@@ -31,9 +31,11 @@
 #include <dvsdef.h>
 #include <efndef.h>
 #include <iodef.h>
+#include <jpidef.h>
 #include <jbcmsgdef.h>
 #include <lnmdef.h>
 #include <nmadef.h>
+#include <prvdef.h>
 #include <quidef.h>
 #include <rmidef.h>
 #include <ssdef.h>
@@ -164,6 +166,15 @@ int ha_plat_exists(const char *path)
 {
     struct stat st;
     return stat(path, &st) == 0;
+}
+
+int ha_plat_remove(const char *path)
+{
+    int i;
+    for (i = 0; i < 100 && ha_plat_exists(path); i++)  /* remove() takes one version */
+        if (remove(path) != 0)
+            return 0;
+    return !ha_plat_exists(path);
 }
 
 int ha_plat_file_exposed(const char *path)
@@ -958,4 +969,36 @@ int ha_plat_sample(struct ha_sample *s)
 int ha_plat_stop_requested(void)
 {
     return stop_flag;
+}
+
+int ha_plat_check_account(char *err, size_t errlen)
+{
+    /* D9, from vms-beszel D12: authorized privileges beyond NETMBX and TMPMBX
+       can be turned back on by anything running in the process, and a
+       system-group UIC reaches files a normal account can't.  Refuse both. */
+    uint64_t auth = 0, allowed = (uint64_t)PRV$M_NETMBX | (uint64_t)PRV$M_TMPMBX;
+    unsigned int grp = 0, maxsys = 8;
+    struct item il[3];
+    struct iosb iosb;
+    uint64_t rl1 = 0, rl2 = 0;          /* 8 bytes of room (beszel NOTES 23) */
+    memset(il, 0, sizeof il);
+    il[0].len = 8; il[0].code = JPI$_AUTHPRIV; il[0].buf = &auth; il[0].retlen = (unsigned short *)&rl1;
+    il[1].len = 4; il[1].code = JPI$_GRP; il[1].buf = &grp; il[1].retlen = (unsigned short *)&rl2;
+    if (!(sys$getjpiw(EFN$C_ENF, 0, 0, il, (void *)&iosb, 0, 0) & 1) || !(iosb.st & 1)) {
+        snprintf(err, errlen, "can't read this process's privileges");
+        return 0;
+    }
+    syi(SYI$_MAXSYSGROUP, &maxsys, 4, NULL);
+    if (grp <= maxsys) {
+        snprintf(err, errlen, "this account's UIC group (%o) is a system group: run the agent "
+                 "as its own account (HASS$USER; DECISIONS.md D9)", grp);
+        return 0;
+    }
+    if (auth & ~allowed) {
+        snprintf(err, errlen, "this account is authorized for privileges beyond NETMBX and "
+                 "TMPMBX: run the agent as an account that has only those (HASS$USER; "
+                 "DECISIONS.md D9)");
+        return 0;
+    }
+    return 1;
 }
