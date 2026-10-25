@@ -156,3 +156,35 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
 - Neither node is a cluster member (`CLUSTER_MEMBER` FALSE, `VAXCLUSTER` 0), so there
   are no cluster sensors. Every disk reports 0 errors, online, not in mount
   verification.
+
+## 10. A day of history (2026-10-24 22:33 to 2026-10-25 22:33 UTC)
+
+Observed with HA's recorder (hourly statistics and state history) and the agents'
+batch logs (AGENT_RUN.LOG on each node).
+
+- **History is complete:** 23 hourly statistics rows for CPU and memory on each
+  node, no hour missing.
+- **Every outage came from the broker's side**, on both nodes at once, and the
+  agents recovered on their own:
+  - broker restarts (00:11, 00:16, 18:07, 18:10, 18:13, 19:14 UTC): "the broker
+    closed the connection", reconnected within 2 s. HA showed the nodes unavailable
+    for about 40 s each time, from before the agents saw the close: HA loses the
+    broker first while it shuts down.
+  - HA restarts (23:24 and 10:06 UTC): the agents saw `homeassistant/status`
+    online and published discovery again; HA was blank for 2-3 s.
+  - 18:15 to 19:12 UTC the broker host did not answer: every connect timed out,
+    retried every 60-72 s until the broker answered (19:12 IA64, 19:16 x86).
+- **The DST change moved x86's boot time by an hour.** At 01:00 UTC x86 went from
+  BST to GMT (`SYS$TIMEZONE_DIFFERENTIAL` 0). The agent computes the boot time as
+  `time(NULL)` minus (local now - SYI$_BOOTTIME), so the local clock going back
+  an hour moved `booted` from 15:48:29Z (right) to 16:48:29Z (wrong). SHOW SYSTEM's
+  uptime (2 06:45:30 at 22:34 GMT) is still right.
+- **The same arithmetic makes `booted` jitter by a second** (…:29 / …:30), a few
+  state changes a day for a value that never changes.
+- **IA64 did not change its clock:** at 22:34 UTC it showed 23:34 with
+  `SYS$TIMEZONE_DIFFERENTIAL` 3600 (BST), so its `booted` did not move. The C RTL's
+  `time()` and `localtime()` still give the right UTC and GMT, because they follow
+  `SYS$TIMEZONE_RULE`. Both nodes' rule is `GMT0BST^1,M3.5.0/01,M10.4.0/02`: the
+  4th Sunday of October, not the last (it happened to be the same day in 2026).
+- The agents' log timestamps are local time without a zone, so they jumped back an
+  hour at 01:00 UTC on x86 and followed the C RTL rule on IA64.
