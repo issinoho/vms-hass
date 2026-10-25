@@ -122,3 +122,32 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
   TCPIP$LPD_IN and TCPIP$SMTP. All available or idle.
 - `SHOW DEVICE /ERRORS` is not a qualifier (`%DCL-W-IVQUAL`); the count is in /FULL.
 - The error log is SYS$SYSROOT:[SYSERR]ERRLOG.SYS (512 blocks on IA64).
+
+## 8. Item codes for Phase 3 (2026-10-25, probes/hdr_extract.com, hdr_ucb.com)
+
+- DVIDEF, QUIDEF and SYIDEF from SYS$STARLET_C.TLB are identical on x86 and IA64
+  for every item used: DVI$_ERRCNT, DVI$_STS, the DVI$_SHDW_* items, QUI$_* and
+  QUI$M_QUEUE_*, and SYI$_CLUSTER_*.
+- DVI$_STS returns UCB$L_STS. Its bits are in UCBDEF, in SYS$LIB_C.TLB, not in the
+  STARLET headers: UCB$M_ONLINE 0x10, UCB$M_MNTVERIP 0x4000. The agent defines the
+  two it needs.
+- `LIBRARY/EXTRACT` output from SYS$LIB_C.TLB holds NUL bytes, so `grep` calls it
+  binary and prints nothing. Use `grep -a`.
+- $GETQUI's IOSB status is a longword (JBC$_ codes), unlike $GETDVI's word.
+
+## 9. Phase 3 on the nodes (2026-10-25)
+
+- Both nodes build clean and pass the 314 unit checks.
+- `--print` with only NETMBX and TMPMBX lists every queue on the node, with
+  states that agree with SHOW QUEUE: 7 on x86, 7 on IA64. $GETQUI needs no
+  privilege to display queues.
+- A batch queue running a job below its job limit is neither busy nor idle in
+  QUI$_QUEUE_STATUS, so it reports "available", as SHOW QUEUE does. Generic queues
+  report idle.
+- `probes/queue_test.com` (in batch) created HASS_TEST, stopped it with a job
+  submitted, started it, paused it and deleted it. At each step the agent agreed
+  with SHOW QUEUE: idle/OFF, stopped/1 pending/ON, idle/OFF, paused/ON, then gone.
+  Same on both nodes; the queue and its files were removed.
+- Neither node is a cluster member (`CLUSTER_MEMBER` FALSE, `VAXCLUSTER` 0), so there
+  are no cluster sensors. Every disk reports 0 errors, online, not in mount
+  verification.

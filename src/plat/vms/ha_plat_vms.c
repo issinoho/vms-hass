@@ -31,8 +31,10 @@
 #include <dvsdef.h>
 #include <efndef.h>
 #include <iodef.h>
+#include <jbcmsgdef.h>
 #include <lnmdef.h>
 #include <nmadef.h>
+#include <quidef.h>
 #include <rmidef.h>
 #include <ssdef.h>
 #include <starlet.h>
@@ -503,6 +505,74 @@ void ha_plat_poll(void)
 
 /* ---- disks: every disk mounted on this node, shadow set members left out ---- */
 
+/* UCB$L_STS bits, as $GETDVI's DVI$_STS returns them (UCBDEF in SYS$LIB_C.TLB,
+   the same on x86 and IA64; NOTES.md 8).  Not in the STARLET headers. */
+#define UCB_M_ONLINE   0x10
+#define UCB_M_MNTVERIP 0x4000
+
+/* a shadow set's members: their state, and their errors added to the set's.
+   DVI$_SHDW_NEXT_MBR_NAME on the virtual unit names the first member, on a
+   member the next one, and is empty after the last. */
+static void shadow_members(struct dsc$descriptor_s *vu, struct ha_shadow *sh, struct ha_disk *d)
+{
+    char name[65];
+    unsigned int mbr = 0, all = 0, vcopy = 0, vmerge = 0;
+    uint64_t nl = 0;                    /* 8 bytes of room (beszel NOTES 23) */
+    struct item il[6];
+    struct iosb iosb;
+    struct dsc$descriptor_s dev;
+    int k, copy_pct = -1, merge_pct = -1;
+    memset(il, 0, sizeof il);
+    il[0].len = 4;  il[0].code = DVI$_SHDW_MBR_COUNT;       il[0].buf = &mbr;
+    il[1].len = 4;  il[1].code = DVI$_SHDW_DEVICE_COUNT;    il[1].buf = &all;
+    il[2].len = 4;  il[2].code = DVI$_SHDW_CATCHUP_COPYING; il[2].buf = &vcopy;
+    il[3].len = 4;  il[3].code = DVI$_SHDW_MERGE_COPYING;   il[3].buf = &vmerge;
+    il[4].len = 64; il[4].code = DVI$_SHDW_NEXT_MBR_NAME;   il[4].buf = name;
+    il[4].retlen = (unsigned short *)&nl;
+    if (!(sys$getdviw(EFN$C_ENF, 0, vu, il, (void *)&iosb, 0, 0, 0) & 1) || !(iosb.st & 1))
+        return;
+    sh->members = (int)mbr;
+    sh->devices = (int)all;
+    sh->copying = vcopy != 0;
+    sh->merging = vmerge != 0;
+    for (k = 0; k < 16 && (unsigned short)nl > 0 && (unsigned short)nl <= 64; k++) {
+        unsigned int copying = 0, merging = 0, cdone = 0, mdone = 0, failed = 0, errs = 0, sts = 0;
+        struct item ml[9];
+        dsc(&dev, name, (unsigned short)nl);
+        nl = 0;
+        memset(ml, 0, sizeof ml);
+        ml[0].len = 4;  ml[0].code = DVI$_SHDW_CATCHUP_COPYING; ml[0].buf = &copying;
+        ml[1].len = 4;  ml[1].code = DVI$_SHDW_MERGE_COPYING;   ml[1].buf = &merging;
+        ml[2].len = 4;  ml[2].code = DVI$_SHDW_MBR_COPY_DONE;   ml[2].buf = &cdone;
+        ml[3].len = 4;  ml[3].code = DVI$_SHDW_MBR_MERGE_DONE;  ml[3].buf = &mdone;
+        ml[4].len = 4;  ml[4].code = DVI$_SHDW_FAILED_MEMBER;   ml[4].buf = &failed;
+        ml[5].len = 4;  ml[5].code = DVI$_ERRCNT;               ml[5].buf = &errs;
+        ml[6].len = 4;  ml[6].code = DVI$_STS;                  ml[6].buf = &sts;
+        ml[7].len = 64; ml[7].code = DVI$_SHDW_NEXT_MBR_NAME;   ml[7].buf = name;
+        ml[7].retlen = (unsigned short *)&nl;
+        if (!(sys$getdviw(EFN$C_ENF, 0, &dev, ml, (void *)&iosb, 0, 0, 0) & 1) || !(iosb.st & 1))
+            break;
+        if (copying) {
+            sh->copying = 1;
+            if (copy_pct < 0 || (int)cdone < copy_pct)
+                copy_pct = (int)cdone;
+        }
+        if (merging) {
+            sh->merging = 1;
+            if (merge_pct < 0 || (int)mdone < merge_pct)
+                merge_pct = (int)mdone;
+        }
+        if (failed)
+            sh->failed++;
+        d->errors += errs;
+        if (sts & UCB_M_MNTVERIP)
+            d->mntver = 1;
+        if (!(sts & UCB_M_ONLINE))
+            d->offline = 1;
+    }
+    sh->progress = sh->copying ? copy_pct : sh->merging ? merge_pct : -1;
+}
+
 static void disks(struct ha_sample *s)
 {
     char name[65];
@@ -519,10 +589,11 @@ static void disks(struct ha_sample *s)
     dsc(&nd, name, 64);
     dsc(&pat, star, 1);
     while (s->ndisk < HA_MAX_DISK) {
-        unsigned int mnt = 0, foreign = 0, member = 0, maxb = 0, freeb = 0;
+        unsigned int mnt = 0, foreign = 0, member = 0, master = 0, maxb = 0, freeb = 0;
+        unsigned int errs = 0, sts = 0;
         char vol[13];
         unsigned short vl = 0;
-        struct item il[7];
+        struct item il[10];
         struct iosb iosb;
         struct ha_disk *d = &s->disk[s->ndisk];
         int st = sys$device_scan(&nd, &nl, &pat, scan, (void *)&ctx);
@@ -536,12 +607,16 @@ static void disks(struct ha_sample *s)
         il[3].len = 4;  il[3].code = DVI$_MAXBLOCK;    il[3].buf = &maxb;
         il[4].len = 4;  il[4].code = DVI$_FREEBLOCKS;  il[4].buf = &freeb;
         il[5].len = 12; il[5].code = DVI$_VOLNAM;      il[5].buf = vol; il[5].retlen = &vl;
+        il[6].len = 4;  il[6].code = DVI$_ERRCNT;      il[6].buf = &errs;
+        il[7].len = 4;  il[7].code = DVI$_STS;         il[7].buf = &sts;
+        il[8].len = 4;  il[8].code = DVI$_SHDW_MASTER; il[8].buf = &master;
         if (!(sys$getdviw(EFN$C_ENF, 0, &dev, il, (void *)&iosb, 0, 0, 0) & 1) || !(iosb.st & 1))
             continue;
         /* a shadow set member's space is its virtual unit's (DSAn:); a foreign
            mount has no file system to measure */
         if (!mnt || foreign || member || maxb == 0)
             continue;
+        memset(d, 0, sizeof *d);
         name[nl] = 0;
         vol[vl < sizeof vol ? vl : sizeof vol - 1] = 0;
         clean_dev(d->name, sizeof d->name, name, 1);
@@ -553,8 +628,122 @@ static void disks(struct ha_sample *s)
         }
         d->total = (uint64_t)maxb * 512;
         d->free = (uint64_t)(freeb < maxb ? freeb : maxb) * 512;
+        d->errors = errs;
+        d->mntver = (sts & UCB_M_MNTVERIP) != 0;
+        d->offline = !(sts & UCB_M_ONLINE);
+        if (master && s->nshadow < HA_MAX_SHADOW) {
+            struct ha_shadow *sh = &s->shadow[s->nshadow++];
+            memset(sh, 0, sizeof *sh);
+            ha_strlcpy(sh->name, d->name, sizeof sh->name);
+            sh->progress = -1;
+            shadow_members(&dev, sh, d);
+        }
         s->ndisk++;
     }
+}
+
+/* ---- queues: $GETQUI, every queue that runs here, and generic queues ---- */
+
+struct qiosb {
+    unsigned int st;                    /* $GETQUI's status is a longword */
+    unsigned int pad;
+};
+
+static char scsnode[16];
+
+static unsigned queue_status(unsigned int v)
+{
+    unsigned st = 0;
+    if (v & QUI$M_QUEUE_STOPPED) st |= HA_Q_STOPPED;
+    if (v & (QUI$M_QUEUE_STOPPING | QUI$M_QUEUE_STOP_PENDING)) st |= HA_Q_STOPPING;
+    if (v & QUI$M_QUEUE_STALLED) st |= HA_Q_STALLED;
+    if (v & (QUI$M_QUEUE_PAUSED | QUI$M_QUEUE_PAUSING)) st |= HA_Q_PAUSED;
+    if (v & (QUI$M_QUEUE_STARTING | QUI$M_QUEUE_RESUMING | QUI$M_QUEUE_RESETTING |
+             QUI$M_QUEUE_ALIGNING)) st |= HA_Q_STARTING;
+    if (v & (QUI$M_QUEUE_UNAVAILABLE | QUI$M_QUEUE_AUTOSTART_INACTIVE)) st |= HA_Q_UNAVAILABLE;
+    if (v & QUI$M_QUEUE_BUSY) st |= HA_Q_BUSY;
+    if (v & QUI$M_QUEUE_IDLE) st |= HA_Q_IDLE;
+    if (v & QUI$M_QUEUE_CLOSED) st |= HA_Q_CLOSED;
+    return st;
+}
+
+static void queues(struct ha_sample *s)
+{
+    static int warned;
+    static char star[] = "*";
+    struct qiosb iosb;
+    unsigned int flags = QUI$M_SEARCH_WILDCARD;
+    int st;
+    sys$getquiw(EFN$C_ENF, QUI$_CANCEL_OPERATION, 0, 0, (void *)&iosb, 0, 0);
+    for (;;) {
+        char qname[32], node[16];
+        unsigned int status = 0, qflags = 0, pending = 0, executing = 0;
+        uint64_t ql = 0, nl = 0;        /* 8 bytes of room (beszel NOTES 23) */
+        struct item il[9];
+        const char *n;
+        size_t len;
+        memset(il, 0, sizeof il);
+        il[0].len = 1;  il[0].code = QUI$_SEARCH_NAME;  il[0].buf = star;
+        il[1].len = 4;  il[1].code = QUI$_SEARCH_FLAGS; il[1].buf = &flags;
+        il[2].len = 31; il[2].code = QUI$_QUEUE_NAME;   il[2].buf = qname;
+        il[2].retlen = (unsigned short *)&ql;
+        il[3].len = 4;  il[3].code = QUI$_QUEUE_STATUS; il[3].buf = &status;
+        il[4].len = 4;  il[4].code = QUI$_QUEUE_FLAGS;  il[4].buf = &qflags;
+        il[5].len = 15; il[5].code = QUI$_SCSNODE_NAME; il[5].buf = node;
+        il[5].retlen = (unsigned short *)&nl;
+        il[6].len = 4;  il[6].code = QUI$_PENDING_JOB_COUNT;   il[6].buf = &pending;
+        il[7].len = 4;  il[7].code = QUI$_EXECUTING_JOB_COUNT; il[7].buf = &executing;
+        st = sys$getquiw(EFN$C_ENF, QUI$_DISPLAY_QUEUE, 0, il, (void *)&iosb, 0, 0);
+        if (st & 1)
+            st = (int)iosb.st;
+        if (!(st & 1))
+            break;
+        qname[(unsigned short)ql < 31 ? (unsigned short)ql : 31] = 0;
+        node[(unsigned short)nl < 15 ? (unsigned short)nl : 15] = 0;
+        n = node;
+        len = strlen(node);
+        ha_trim(&n, &len);
+        /* a queue that runs on another member is that member's to report */
+        if (!(qflags & QUI$M_QUEUE_GENERIC) && len &&
+            !(strlen(scsnode) == len && strncmp(n, scsnode, len) == 0))
+            continue;
+        if (s->nqueue == HA_MAX_QUEUE) {
+            if (!warned) {
+                warned = 1;
+                say(HA_LOG_WARN, "more than %d queues: set QUEUES to choose", HA_MAX_QUEUE);
+            }
+            break;
+        }
+        {
+            struct ha_queue *q = &s->queue[s->nqueue++];
+            memset(q, 0, sizeof *q);
+            ha_strlcpy(q->name, qname, sizeof q->name);
+            q->status = queue_status(status);
+            q->generic = (qflags & QUI$M_QUEUE_GENERIC) != 0;
+            q->pending = (int)pending;
+            q->executing = (int)executing;
+        }
+    }
+    if (st != JBC$_NOMOREQUE && st != JBC$_NOSUCHQUE && !warned) {
+        warned = 1;
+        say(HA_LOG_WARN, "$GETQUI: status %%X%08X", (unsigned)st);
+    }
+    sys$getquiw(EFN$C_ENF, QUI$_CANCEL_OPERATION, 0, 0, (void *)&iosb, 0, 0);
+}
+
+static void cluster(struct ha_sample *s)
+{
+    unsigned int member = 0, nodes = 0, votes = 0, quorum = 0;
+    syi(SYI$_CLUSTER_MEMBER, &member, 4, NULL);
+    if (!(member & 1))
+        return;
+    syi(SYI$_CLUSTER_NODES, &nodes, 4, NULL);
+    syi(SYI$_CLUSTER_VOTES, &votes, 4, NULL);
+    syi(SYI$_CLUSTER_QUORUM, &quorum, 4, NULL);
+    s->cluster.member = 1;
+    s->cluster.nodes = (int)(nodes & 0xFFFF);
+    s->cluster.votes = (int)(votes & 0xFFFF);
+    s->cluster.quorum = (int)(quorum & 0xFFFF);
 }
 
 /* ---- interactive users: SHOW USERS, at most once a minute ---- */
@@ -607,6 +796,16 @@ int ha_plat_init(void)
 #endif
     srand((unsigned)time(NULL) ^ (unsigned)getpid());
     syi(SYI$_PAGE_SIZE, &page_size, 4, NULL);
+    {
+        char n[16];
+        unsigned short l = 0;
+        const char *p = n;
+        size_t len;
+        syi(SYI$_SCSNODE, n, sizeof n - 1, &l);
+        len = l < sizeof n ? l : sizeof n - 1;
+        ha_trim(&p, &len);
+        ha_strlcpyn(scsnode, sizeof scsnode, p, len);
+    }
     nic_open_all();
     nic_refresh();
     return 1;
@@ -718,6 +917,8 @@ int ha_plat_sample(struct ha_sample *s)
     s->interactive = users;
 
     disks(s);
+    queues(s);
+    cluster(s);
     nic_refresh();
     for (i = 0; i < (unsigned)nnic; i++) {
         /* a device that has carried nothing since boot is configured but

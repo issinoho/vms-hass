@@ -11,7 +11,13 @@ $ exe = f$parse("[.BUILD]HASS_AGENT.EXE")
 $ agent := $'exe'
 $ conf = p2
 $ if conf .eqs. "" then conf = "AGENT.CONF"
-$ if p1 .eqs. "PRINT" then agent "--print" nl:
+$! PRINT also runs with only NETMBX and TMPMBX, as the agent will
+$ if p1 .eqs. "PRINT"
+$ then
+$   old = f$setprv("NOALL,NETMBX,TMPMBX")
+$   agent "--print" nl:
+$   old = f$setprv(old)
+$ endif
 $! RUN drops to NETMBX and TMPMBX first: the agent must need no privilege
 $ if p1 .eqs. "RUN"
 $ then
