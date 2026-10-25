@@ -109,3 +109,16 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
   HA's template engine before use.
 - When a node's disks or NICs change, rerun the generator: the dashboard does not
   follow sensors by itself.
+
+## 7. What Phase 3 has to work with (2026-10-25, probes/p3_survey*.com)
+
+- Both nodes are single-member clusters (SHOW CLUSTER lists only themselves).
+- No shadow sets. `F$GETSYI("SHADOWING")` is 0 on both, so shadowing is not loaded and
+  turning it on needs SYSGEN and a reboot. IA64 has a VOLSHAD licence (to
+  30-APR-2027); x86 lists none. SHDRIVER.EXE is not in SYS$LOADABLE_IMAGES on either.
+- Every mounted disk has error count 0. There is no way to make one count an error
+  on demand. LDDRIVER is present on both (x86 has LDM0 and its boot disk LDM2585).
+- Queues: SYS$BATCH and X86VMS_BATCH on x86; on IA64 SYS$BATCH, the CANON printer,
+  TCPIP$LPD_IN and TCPIP$SMTP. All available or idle.
+- `SHOW DEVICE /ERRORS` is not a qualifier (`%DCL-W-IVQUAL`); the count is in /FULL.
+- The error log is SYS$SYSROOT:[SYSERR]ERRLOG.SYS (512 blocks on IA64).
