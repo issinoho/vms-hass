@@ -151,14 +151,21 @@ static int print_mode(const struct ha_agent_cfg *cfg, const struct ha_identity *
 {
     static struct ha_sample s1, s2;
     static struct ha_comp_set set;
+    static struct ha_track track;
     struct ha_figures f;
     ha_buf b;
     uint64_t t0;
+    int i, k;
     ha_plat_sample(&s1);
     t0 = ha_plat_now_ms();
     ha_plat_sleep_ms(2000);
     ha_plat_sample(&s2);
+    for (i = k = 0; i < s2.nqueue; i++)
+        if (ha_agent_queue_wanted(cfg->queues, s2.queue[i].name))
+            s2.queue[k++] = s2.queue[i];
+    s2.nqueue = k;
     ha_model_figures(&s1, &s2, ha_plat_now_ms() - t0, &f);
+    ha_track_update(&track, &s2, ha_plat_now_ms(), (uint64_t)cfg->error_hold_s * 1000, &f);
     ha_model_components(&s2, &set);
     ha_buf_init(&b);
     if (!ha_model_discovery(&cfg->model, id, &set, NULL, &b))
@@ -184,7 +191,7 @@ int main(int argc, char **argv)
     char err[300];
     const char *path, *v, *host, *user, *ca, *dir;
     const char *disc_prefix, *topic_prefix;
-    long keepalive, interval, portn;
+    long keepalive, interval, portn, hold;
     int remove_mode = 0, print_only = 0, tls, argi = 1, rc = 0;
     ha_sock *sock = NULL;
     uint64_t retry_at = 0, remove_deadline = 0;
@@ -232,7 +239,7 @@ int main(int argc, char **argv)
     /* the strings must outlive the agent: keep copies, not conf_get's scratch */
     {
         static char s_host[256], s_user[128], s_ca[1024], s_dir[1024], s_disc[64], s_topic[64];
-        static char s_nodeid[64], s_devname[64];
+        static char s_nodeid[64], s_devname[64], s_queues[1024];
         const char *t;
         t = ha_conf_get(&conf, "MQTT_HOST");   ha_strlcpy(s_host, t ? t : "", sizeof s_host);
         t = ha_conf_get(&conf, "MQTT_USER");   ha_strlcpy(s_user, t ? t : "", sizeof s_user);
@@ -245,6 +252,9 @@ int main(int argc, char **argv)
         ha_strlcpy(s_topic, t && *t ? t : "openvms", sizeof s_topic);
         t = ha_conf_get(&conf, "NODE_ID");     ha_strlcpy(s_nodeid, t ? t : "", sizeof s_nodeid);
         t = ha_conf_get(&conf, "DEVICE_NAME"); ha_strlcpy(s_devname, t ? t : "", sizeof s_devname);
+        t = ha_conf_get(&conf, "QUEUES");
+        ha_strlcpy(s_queues, t && *t ? t : "*", sizeof s_queues);
+        cfg.queues = s_queues;
         host = s_host;
         user = s_user;
         ca = s_ca;
@@ -253,7 +263,8 @@ int main(int argc, char **argv)
         topic_prefix = s_topic;
         if (!number(ha_conf_get(&conf, "MQTT_PORT"), 1, 65535, -1, "MQTT_PORT", &portn) ||
             !number(ha_conf_get(&conf, "MQTT_KEEPALIVE"), 10, 3600, 60, "MQTT_KEEPALIVE", &keepalive) ||
-            !number(ha_conf_get(&conf, "INTERVAL"), 5, 3600, 30, "INTERVAL", &interval))
+            !number(ha_conf_get(&conf, "INTERVAL"), 5, 3600, 30, "INTERVAL", &interval) ||
+            !number(ha_conf_get(&conf, "ERROR_HOLD"), 1, 10080, 60, "ERROR_HOLD", &hold))
             { rc = 1; goto out; }
         tls = yes(ha_conf_get(&conf, "MQTT_TLS"));
         if (portn < 0)
@@ -306,6 +317,7 @@ int main(int argc, char **argv)
     cfg.sess.keepalive_s = (unsigned)keepalive;
     cfg.sess.status_topic = status_topic;
     cfg.interval_s = (unsigned)interval;
+    cfg.error_hold_s = (unsigned)hold * 60;
 
     if (print_only)
         { rc = print_mode(&cfg, &id); goto out; }

@@ -94,10 +94,12 @@ check "the agent connects" wait_for 10 grep -q 'connected to the broker' agent1.
 check "the node ID is saved" test "$(cat data/node_id)" = "$NODE"
 S -t "$CONFIG_T" -C 1 -W 5 > config.json
 check "retained discovery config is valid JSON" json_ok < config.json
-check "29 sensors, origin and device" python3 - config.json <<'EOF'
+check "41 sensors, origin and device" python3 - config.json <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert len(d["cmps"]) == 29, len(d["cmps"])
+assert len(d["cmps"]) == 41, len(d["cmps"])
+assert d["cmps"]["queue_sys_batch_problem"]["p"] == "binary_sensor"
+assert d["cmps"]["queue_sys_batch_state"]["device_class"] == "enum"
 assert d["o"]["name"] == "vms-hass" and d["dev"]["ids"] == ["stubvms_1025"]
 assert all(c["unique_id"] == "stubvms_1025_" + k for k, c in d["cmps"].items())
 assert d["availability_topic"] == "openvms/stubvms_1025/availability"
@@ -130,9 +132,45 @@ check "DKA100's sensors are removed" python3 - removed.json <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["cmps"]["disk_dka100_used"] == {"p": "sensor"}, d["cmps"].get("disk_dka100_used")
+assert d["cmps"]["disk_dka100_problem"] == {"p": "binary_sensor"}, d["cmps"].get("disk_dka100_problem")
 assert "unique_id" in d["cmps"]["disk_dka0_used"]
 EOF
 echo 'cpu 20' > control
+
+echo "== problem sensors (D8)"
+state_has() {  # state_has <python expression over s>: the retained state satisfies it
+    "$SUB" -h 127.0.0.1 -p 18830 -u tester -P t3ster -t "$STATE_T" -C 1 -W 2 2>/dev/null |
+        python3 -c "import json,sys; s=json.load(sys.stdin); sys.exit(0 if ($1) else 1)" 2>/dev/null
+}
+printf '%s\n' 'cpu 20' 'queue SYS$BATCH stopped 3 0 generic' 'queue STUBVMS_BATCH idle 0 1' \
+    'errors DKA0: 0' 'shadow DSA1: 2 2 0 steady' 'disks DKA0:,DKA100:,DSA1:' 'cluster 2 2 2' > control
+check "a stopped queue is a problem" wait_for 12 state_has \
+    's["queue_sys_batch_state"] == "stopped" and s["queue_sys_batch_problem"] == "ON" and s["queue_sys_batch_pending"] == 3'
+check "a running queue is not" state_has 's["queue_stubvms_batch_problem"] == "OFF" and s["queue_stubvms_batch_executing"] == 1'
+check "a shadow set and the cluster appear" state_has \
+    's["shadow_dsa1_state"] == "steady" and s["shadow_dsa1_problem"] == "OFF" and s["cluster_nodes"] == 2'
+sed -i 's/^queue SYS\$BATCH stopped 3 0/queue SYS$BATCH idle 0 0/; s/^errors DKA0: 0/errors DKA0: 2/' control
+check "the queue started again: problem off" wait_for 12 state_has 's["queue_sys_batch_problem"] == "OFF"'
+check "disk errors rose: problem on" state_has 's["disk_dka0_errors"] == 2 and s["disk_dka0_problem"] == "ON"'
+sed -i 's/^shadow DSA1: 2 2 0 steady/shadow DSA1: 1 1 0 steady/' control
+check "a member left the shadow set: degraded" wait_for 12 state_has \
+    's["shadow_dsa1_state"] == "degraded" and s["shadow_dsa1_problem"] == "ON"'
+sed -i 's/^shadow DSA1: 1 1 0 steady/shadow DSA1: 1 2 0 copying 37/' control
+check "it is copied back in: copying, 37%" wait_for 12 state_has \
+    's["shadow_dsa1_state"] == "copying" and s["shadow_dsa1_progress"] == 37'
+sed -i 's/^shadow DSA1: 1 2 0 copying 37/shadow DSA1: 2 2 0 steady/' control
+check "and steady again" wait_for 12 state_has \
+    's["shadow_dsa1_state"] == "steady" and s["shadow_dsa1_problem"] == "OFF" and s["shadow_dsa1_progress"] is None'
+S -t "$CONFIG_T" -R -C 1 -W 12 > noshadow.json & sp=$!
+sleep 0.3
+echo 'cpu 20' > control
+wait $sp
+check "the set dismounted: its binary sensor is removed as one" python3 - noshadow.json <<'EOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["cmps"]["shadow_dsa1_problem"] == {"p": "binary_sensor"}, d["cmps"].get("shadow_dsa1_problem")
+assert d["cmps"]["cluster_nodes"] == {"p": "sensor"}
+EOF
 
 echo "== the last will (kill -9)"
 S -t "$AVAIL_T" -R -C 1 -W 25 > will.txt & sp=$!

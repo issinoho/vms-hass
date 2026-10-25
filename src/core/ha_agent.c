@@ -159,25 +159,74 @@ int ha_agent_sample_due(const ha_agent *a, uint64_t now)
     return now >= a->next_sample;
 }
 
+static int name_eq(const char *a, size_t n, const char *b)
+{
+    size_t i;
+    for (i = 0; i < n; i++) {
+        char x = a[i], y = b[i];
+        if (!y)
+            return 0;
+        if (x >= 'a' && x <= 'z')
+            x = (char)(x - 'a' + 'A');
+        if (y >= 'a' && y <= 'z')
+            y = (char)(y - 'a' + 'A');
+        if (x != y)
+            return 0;
+    }
+    return b[n] == 0;
+}
+
+int ha_agent_queue_wanted(const char *list, const char *name)
+{
+    const char *p = list;
+    size_t n;
+    if (!list)
+        return 1;
+    while (*p == ' ')
+        p++;
+    if (strcmp(p, "*") == 0)
+        return 1;
+    while (*p) {
+        const char *s;
+        n = strcspn(p, ",");
+        s = p;
+        ha_trim(&s, &n);
+        if (n == 1 && *s == '*')
+            return 1;
+        if (n && name_eq(s, n, name))
+            return 1;
+        p += strcspn(p, ",");
+        if (*p == ',')
+            p++;
+    }
+    return 0;                           /* "NONE" matches no queue name a node allows */
+}
+
 int ha_agent_sample(ha_agent *a, const struct ha_sample *s, uint64_t now)
 {
     struct ha_comp_set *next = &a->removed;     /* scratch until discovery */
+    int i, k;
     if (a->nsamples) {
         a->prev = a->cur;
         a->prev_at = a->cur_at;
     }
     a->cur = *s;
+    for (i = k = 0; i < a->cur.nqueue && i < HA_MAX_QUEUE; i++)
+        if (ha_agent_queue_wanted(a->cfg.queues, a->cur.queue[i].name))
+            a->cur.queue[k++] = a->cur.queue[i];
+    a->cur.nqueue = k;
     a->cur_at = now;
     a->nsamples++;
     ha_model_figures(a->nsamples > 1 ? &a->prev : NULL, &a->cur,
                      a->nsamples > 1 ? now - a->prev_at : 0, &a->fig);
+    ha_track_update(&a->track, &a->cur, now, (uint64_t)a->cfg.error_hold_s * 1000, &a->fig);
     a->next_sample = now + (a->nsamples == 1 ? HA_FIRST_INTERVAL_MS
                                             : (uint64_t)a->cfg.interval_s * 1000);
     ha_model_components(&a->cur, next);
     if (!ha_model_same(next, &a->comps)) {
         a->comps = *next;
         if (ha_agent_up(a) && a->nsamples > 1) {
-            say(a, HA_LOG_INFO, "the sensors changed (a disk or NIC came or went)");
+            say(a, HA_LOG_INFO, "the sensors changed (a disk, NIC, shadow set or queue came or went)");
             if (!publish_discovery(a, now))
                 return 0;
         }
@@ -238,19 +287,26 @@ void ha_agent_load_published(ha_agent *a, const char *text, size_t n)
     size_t i = 0;
     a->published.n = 0;
     while (i < n && a->published.n < HA_MAX_COMP) {
-        const char *s = text + i;
-        size_t len = 0;
+        const char *s = text + i, *p;
+        size_t len = 0, klen;
         struct ha_comp *c;
         while (i + len < n && text[i + len] != '\n')
             len++;
         i += len + 1;
         ha_trim(&s, &len);
-        if (len == 0 || len >= HA_KEY)
+        /* "<key>" (a sensor: Phase 2 files) or "<key> <platform>" */
+        for (klen = 0; klen < len && s[klen] != ' '; klen++)
+            ;
+        if (klen == 0 || klen >= HA_KEY)
             continue;
+        p = s + klen;
+        while (p < s + len && *p == ' ')
+            p++;
         c = &a->published.c[a->published.n++];
         memset(c, 0, sizeof *c);
-        ha_strlcpyn(c->key, sizeof c->key, s, len);
-        c->platform = "sensor";         /* the only platform so far */
+        ha_strlcpyn(c->key, sizeof c->key, s, klen);
+        c->platform = (size_t)(s + len - p) == 13 && memcmp(p, "binary_sensor", 13) == 0
+                      ? "binary_sensor" : "sensor";
         c->precision = -1;
     }
     a->have_published = a->published.n > 0;
@@ -269,6 +325,10 @@ void ha_agent_published_text(const ha_agent *a, ha_buf *out)
     ha_buf_clear(out);
     for (i = 0; i < a->published.n; i++) {
         ha_buf_puts(out, a->published.c[i].key);
+        if (strcmp(a->published.c[i].platform, "sensor") != 0) {
+            ha_buf_putc(out, ' ');
+            ha_buf_puts(out, a->published.c[i].platform);
+        }
         ha_buf_putc(out, '\n');
     }
 }

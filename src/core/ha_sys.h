@@ -10,6 +10,8 @@
 
 #define HA_MAX_DISK 32
 #define HA_MAX_NIC 8
+#define HA_MAX_SHADOW 16
+#define HA_MAX_QUEUE 32
 #define HA_NAME 32
 
 /* cumulative CPU time in processor modes, summed over the active CPUs, in ticks
@@ -29,6 +31,46 @@ struct ha_disk {
     char label[HA_NAME];                /* volume label, "" if none */
     uint64_t total;                     /* bytes */
     uint64_t free;
+    uint32_t errors;                    /* device error count (a shadow set: its members' too) */
+    int mntver;                         /* mount verification in progress */
+    int offline;                        /* the device (or a member) is not online */
+};
+
+/* a mounted shadow set (its virtual unit is also in disk[]) */
+struct ha_shadow {
+    char name[HA_NAME];                 /* "DSA1:" */
+    int members;                        /* full members */
+    int devices;                        /* members, counting copy targets */
+    int failed;                         /* members failed out of the set */
+    int copying;                        /* a copy is in progress */
+    int merging;                        /* a merge is in progress */
+    int progress;                       /* % done of the copy or merge; -1 none */
+};
+
+/* queue states: not OpenVMS's bits (the platform translates) */
+#define HA_Q_STOPPED      0x001
+#define HA_Q_STOPPING     0x002         /* stopping, or a stop is pending */
+#define HA_Q_STALLED      0x004
+#define HA_Q_PAUSED       0x008         /* paused or pausing */
+#define HA_Q_STARTING     0x010         /* starting, resuming, resetting, aligning */
+#define HA_Q_UNAVAILABLE  0x020         /* unavailable, or autostart inactive */
+#define HA_Q_BUSY         0x040
+#define HA_Q_IDLE         0x080
+#define HA_Q_CLOSED       0x100         /* accepts no new jobs */
+
+struct ha_queue {
+    char name[HA_NAME];                 /* "SYS$BATCH" */
+    unsigned status;                    /* HA_Q_* */
+    int generic;
+    int pending;
+    int executing;
+};
+
+struct ha_cluster {
+    int member;                         /* 0: not in a cluster, the rest unused */
+    int nodes;
+    int votes;
+    int quorum;
 };
 
 struct ha_nic {
@@ -55,6 +97,11 @@ struct ha_sample {
     struct ha_disk disk[HA_MAX_DISK];
     int nnic;
     struct ha_nic nic[HA_MAX_NIC];
+    int nshadow;
+    struct ha_shadow shadow[HA_MAX_SHADOW];
+    int nqueue;
+    struct ha_queue queue[HA_MAX_QUEUE];
+    struct ha_cluster cluster;
 };
 
 /* what does not change while the agent runs */

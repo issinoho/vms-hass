@@ -67,12 +67,12 @@ prefix `ha_`.
 | Network | per LAN device: receive and transmit rates | 2 |
 | System | uptime, boot time (timestamp), process count, interactive users | 2 |
 | Identity (diagnostic) | VMS version, hardware model, architecture, CPUs, node name, agent version | 2 |
-| Cluster | member count, votes, quorum, per-member state | 3 |
-| Queues | per queue: state, pending and executing jobs; problem sensors for stopped or stalled queues | 3 |
-| Devices | per disk: error count; shadow set state and members; problem sensors when errors rise or a shadow set is degraded | 3 |
-| Error log | error-log entries since boot | 3 |
+| Disks | per disk: error count; problem (mount verification, offline, errors rising) | 3 |
+| Shadow sets | per set: state, full members, copy/merge progress; problem | 3 |
+| Queues | per queue: state, pending and executing jobs; problem (stopped, stalled, paused, unavailable) | 3 |
+| Cluster | nodes, votes, quorum (cluster members only) | 3 |
 
-Phase 3's list is a starting point, to be agreed at the Phase 2 exit.
+Phase 3's list was agreed on 2026-10-25 (D8); the error log was dropped.
 
 ## Reuse from vms-beszel (D4)
 

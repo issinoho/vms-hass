@@ -384,7 +384,8 @@ static void test_model(void)
     ha_model_components(&b, &set2);
     CHECK(!ha_model_same(&set, &set2));
     ha_model_removed(&set, &set2, &removed);
-    CHECK(removed.n == 3 && has_key(&removed, "disk_1_dga100_size"));
+    CHECK(removed.n == 5 && has_key(&removed, "disk_1_dga100_size") &&
+          has_key(&removed, "disk_1_dga100_problem"));
     CHECK(ha_model_discovery(&cfg, &id, &set2, &removed, &out));
     CHECK(strstr((char *)out.p, "\"disk_1_dga100_used\":{\"p\":\"sensor\"}") != NULL);
     CHECK(strstr((char *)out.p, "\"unique_id\":\"n_1_disk_dka0_used\"") != NULL);
@@ -402,6 +403,203 @@ static void test_model(void)
     }
     ha_model_components(&b, &set);
     CHECK(ha_model_same(&set, &set2));
+    ha_buf_free(&out);
+}
+
+/* ---- Phase 3: disk errors, shadow sets, queues, cluster (D8) ---- */
+
+static const struct ha_comp *find_comp(const struct ha_comp_set *set, const char *key)
+{
+    int i;
+    for (i = 0; i < set->n; i++)
+        if (strcmp(set->c[i].key, key) == 0)
+            return &set->c[i];
+    return NULL;
+}
+
+static void test_phase3(void)
+{
+    static struct ha_sample s;
+    static struct ha_comp_set set, set2, removed;
+    static struct ha_track t;
+    struct ha_figures f;
+    struct ha_model_cfg cfg;
+    struct ha_identity id;
+    const struct ha_comp *c;
+    const uint64_t hold = 3600000;
+    ha_buf out;
+    ha_buf_init(&out);
+
+    /* queue states: the most urgent wins, and which are problems */
+    CHECK_STR(ha_queue_state(0), "available");
+    CHECK_STR(ha_queue_state(HA_Q_IDLE), "idle");
+    CHECK_STR(ha_queue_state(HA_Q_BUSY | HA_Q_CLOSED), "busy");
+    CHECK_STR(ha_queue_state(HA_Q_STOPPED | HA_Q_IDLE), "stopped");
+    CHECK_STR(ha_queue_state(HA_Q_STALLED | HA_Q_BUSY), "stalled");
+    CHECK_STR(ha_queue_state(HA_Q_UNAVAILABLE), "unavailable");
+    CHECK(ha_queue_problem(HA_Q_STOPPED) && ha_queue_problem(HA_Q_PAUSED) &&
+          ha_queue_problem(HA_Q_STOPPING) && ha_queue_problem(HA_Q_STALLED) &&
+          ha_queue_problem(HA_Q_UNAVAILABLE));
+    CHECK(!ha_queue_problem(HA_Q_IDLE | HA_Q_BUSY | HA_Q_CLOSED | HA_Q_STARTING));
+
+    /* QUEUES */
+    CHECK(ha_agent_queue_wanted(NULL, "SYS$BATCH"));
+    CHECK(ha_agent_queue_wanted("*", "SYS$BATCH"));
+    CHECK(ha_agent_queue_wanted(" sys$batch , PRINT", "SYS$BATCH"));
+    CHECK(ha_agent_queue_wanted("SYS$BATCH,print", "PRINT"));
+    CHECK(!ha_agent_queue_wanted("SYS$BATCH,PRINT", "PRINTER"));
+    CHECK(!ha_agent_queue_wanted("SYS$BATCH,PRINT", "SYS$BAT"));
+    CHECK(!ha_agent_queue_wanted("NONE", "SYS$BATCH"));
+    CHECK(!ha_agent_queue_wanted("", "SYS$BATCH"));
+
+    /* disk problems: rises held for an hour; counts at start-up are not rises */
+    memset(&s, 0, sizeof s);
+    memset(&t, 0, sizeof t);
+    s.ndisk = 2;
+    strcpy(s.disk[0].name, "DKA0:");
+    s.disk[0].total = 1000;
+    s.disk[0].errors = 7;
+    strcpy(s.disk[1].name, "DSA1:");
+    s.disk[1].total = 1000;
+    memset(&f, 0, sizeof f);
+    ha_track_update(&t, &s, 1000, hold, &f);
+    CHECK(!f.disk_problem[0] && !f.disk_problem[1]);
+    s.disk[0].errors = 8;
+    ha_track_update(&t, &s, 2000, hold, &f);
+    CHECK(f.disk_problem[0] && !f.disk_problem[1]);
+    ha_track_update(&t, &s, 2000 + hold - 1, hold, &f);
+    CHECK(f.disk_problem[0]);
+    ha_track_update(&t, &s, 2000 + hold, hold, &f);
+    CHECK(!f.disk_problem[0]);
+    s.disk[1].mntver = 1;
+    ha_track_update(&t, &s, 2000 + hold, hold, &f);
+    CHECK(f.disk_problem[1]);
+    s.disk[1].mntver = 0;
+    s.disk[1].offline = 1;
+    ha_track_update(&t, &s, 2000 + hold, hold, &f);
+    CHECK(f.disk_problem[1]);
+    s.disk[1].offline = 0;
+    /* the disks swap places: each keeps its own history */
+    {
+        struct ha_disk d = s.disk[0];
+        s.disk[0] = s.disk[1];
+        s.disk[1] = d;
+        s.disk[1].errors = 9;
+        ha_track_update(&t, &s, 3000 + hold, hold, &f);
+        CHECK(!f.disk_problem[0] && f.disk_problem[1]);
+    }
+
+    /* shadow sets: degraded below the most members seen; a copy says copying */
+    s.nshadow = 1;
+    strcpy(s.shadow[0].name, "DSA1:");
+    s.shadow[0].members = 3;
+    s.shadow[0].devices = 3;
+    s.shadow[0].progress = -1;
+    ha_track_update(&t, &s, 4000 + hold, hold, &f);
+    CHECK(f.shadow_state[0] == HA_SHADOW_STEADY);
+    s.shadow[0].members = 2;
+    s.shadow[0].devices = 2;
+    ha_track_update(&t, &s, 5000 + hold, hold, &f);
+    CHECK(f.shadow_state[0] == HA_SHADOW_DEGRADED);
+    s.shadow[0].devices = 3;
+    s.shadow[0].copying = 1;
+    s.shadow[0].progress = 42;
+    ha_track_update(&t, &s, 6000 + hold, hold, &f);
+    CHECK(f.shadow_state[0] == HA_SHADOW_COPYING);
+    s.shadow[0].copying = 0;
+    s.shadow[0].merging = 1;
+    ha_track_update(&t, &s, 6000 + hold, hold, &f);
+    CHECK(f.shadow_state[0] == HA_SHADOW_MERGING);
+    s.shadow[0].merging = 0;
+    s.shadow[0].members = 3;
+    s.shadow[0].progress = -1;
+    ha_track_update(&t, &s, 7000 + hold, hold, &f);
+    CHECK(f.shadow_state[0] == HA_SHADOW_STEADY);
+    s.shadow[0].failed = 1;
+    ha_track_update(&t, &s, 7000 + hold, hold, &f);
+    CHECK(f.shadow_state[0] == HA_SHADOW_DEGRADED);
+    s.shadow[0].failed = 0;
+
+    /* the components and their discovery */
+    s.nqueue = 2;
+    strcpy(s.queue[0].name, "SYS$BATCH");
+    s.queue[0].generic = 1;
+    strcpy(s.queue[1].name, "A_QUEUE_NAME_OF_THIRTY_ONE_CHAR");     /* the longest allowed */
+    s.queue[1].status = HA_Q_STOPPED;
+    s.queue[1].pending = 4;
+    s.cluster.member = 1;
+    s.cluster.nodes = 2;
+    s.cluster.votes = 2;
+    s.cluster.quorum = 2;
+    ha_model_components(&s, &set);
+    CHECK((c = find_comp(&set, "disk_dka0_errors")) != NULL && strcmp(c->state_class, "total_increasing") == 0);
+    CHECK((c = find_comp(&set, "disk_dka0_problem")) != NULL && strcmp(c->platform, "binary_sensor") == 0 &&
+          strcmp(c->device_class, "problem") == 0);
+    CHECK((c = find_comp(&set, "shadow_dsa1_state")) != NULL && strcmp(c->device_class, "enum") == 0 &&
+          c->options == ha_shadow_states && !c->state_class && !c->unit);
+    CHECK(find_comp(&set, "shadow_dsa1_members") && find_comp(&set, "shadow_dsa1_progress") &&
+          find_comp(&set, "shadow_dsa1_problem"));
+    CHECK(find_comp(&set, "queue_sys_batch_state") && find_comp(&set, "queue_sys_batch_problem"));
+    CHECK(find_comp(&set, "queue_a_queue_name_of_thirty_one_char_executing"));
+    CHECK(find_comp(&set, "cluster_nodes") && find_comp(&set, "cluster_quorum")->diagnostic);
+
+    memset(&cfg, 0, sizeof cfg);
+    cfg.discovery_prefix = "homeassistant";
+    cfg.topic_prefix = "openvms";
+    cfg.node_id = "n_1";
+    cfg.device_name = "N";
+    cfg.agent_version = "t";
+    cfg.expire_after_s = 100;
+    memset(&id, 0, sizeof id);
+    CHECK(ha_model_discovery(&cfg, &id, &set, NULL, &out));
+    CHECK(strstr((char *)out.p, "\"disk_dka0_problem\":{\"p\":\"binary_sensor\",\"unique_id\":"
+                               "\"n_1_disk_dka0_problem\",\"name\":\"DKA0 problem\",\"device_class\":"
+                               "\"problem\",\"expire_after\":100,") != NULL);
+    CHECK(strstr((char *)out.p, "\"device_class\":\"enum\",\"icon\":\"mdi:content-copy\","
+                               "\"options\":[\"steady\",\"copying\",\"merging\",\"degraded\"],"
+                               "\"expire_after\":100,") != NULL);
+    CHECK(strstr((char *)out.p, "\"options\":[\"stopped\",\"stopping\",\"stalled\",\"paused\","
+                               "\"starting\",\"unavailable\",\"busy\",\"idle\",\"available\"]") != NULL);
+    CHECK(strstr((char *)out.p, "\"name\":\"SYS$BATCH\"") != NULL);
+
+    /* the state */
+    memset(&f, 0, sizeof f);
+    ha_track_update(&t, &s, 8000 + hold, hold, &f);
+    CHECK(ha_model_state(&set, &s, &f, &out));
+    CHECK(strstr((char *)out.p, "\"disk_dsa1_errors\":0,\"disk_dsa1_problem\":\"OFF\"") != NULL);
+    CHECK(strstr((char *)out.p, "\"shadow_dsa1_state\":\"steady\",\"shadow_dsa1_members\":3,"
+                               "\"shadow_dsa1_progress\":null,\"shadow_dsa1_problem\":\"OFF\"") != NULL);
+    CHECK(strstr((char *)out.p, "\"queue_sys_batch_state\":\"available\",\"queue_sys_batch_pending\":0,"
+                               "\"queue_sys_batch_executing\":0,\"queue_sys_batch_problem\":\"OFF\"") != NULL);
+    CHECK(strstr((char *)out.p, "\"queue_a_queue_name_of_thirty_one_char_state\":\"stopped\","
+                               "\"queue_a_queue_name_of_thirty_one_char_pending\":4,") != NULL);
+    CHECK(strstr((char *)out.p, "\"queue_a_queue_name_of_thirty_one_char_problem\":\"ON\"") != NULL);
+    CHECK(strstr((char *)out.p, "\"cluster_nodes\":2,\"cluster_votes\":2,\"cluster_quorum\":2") != NULL);
+    s.shadow[0].members = 2;
+    s.shadow[0].copying = 1;
+    s.shadow[0].progress = 42;
+    ha_track_update(&t, &s, 9000 + hold, hold, &f);
+    CHECK(ha_model_state(&set, &s, &f, &out));
+    CHECK(strstr((char *)out.p, "\"shadow_dsa1_state\":\"copying\",\"shadow_dsa1_members\":2,"
+                               "\"shadow_dsa1_progress\":42,\"shadow_dsa1_problem\":\"ON\"") != NULL);
+
+    /* a queue goes: its binary sensor is removed as a binary sensor */
+    s.nqueue = 1;
+    ha_model_components(&s, &set2);
+    ha_model_removed(&set, &set2, &removed);
+    CHECK(removed.n == 4);
+    CHECK(ha_model_discovery(&cfg, &id, &set2, &removed, &out));
+    CHECK(strstr((char *)out.p, "\"queue_a_queue_name_of_thirty_one_char_problem\":{\"p\":\"binary_sensor\"}") != NULL);
+    CHECK(strstr((char *)out.p, "\"queue_a_queue_name_of_thirty_one_char_state\":{\"p\":\"sensor\"}") != NULL);
+
+    /* no cluster: no cluster sensors */
+    s.cluster.member = 0;
+    ha_model_components(&s, &set2);
+    CHECK(!find_comp(&set2, "cluster_nodes"));
+
+    /* the longest names fit every key: 31 characters is OpenVMS's limit */
+    CHECK(find_comp(&set, "queue_a_queue_name_of_thirty_one_char_problem") &&
+          find_comp(&set, "queue_a_queue_name_of_thirty_one_char_pending"));
     ha_buf_free(&out);
 }
 
@@ -659,11 +857,13 @@ static void test_agent(void)
     /* the published keys survive a restart: a sensor gone meanwhile is removed */
     {
         static ha_agent b;
-        static const char saved[] = "cpu\nnic_gone_rx\n\ndisk_dka0_free\n";
+        static const char saved[] = "cpu\nnic_gone_rx\n\ndisk_dka0_free\nqueue_gone_problem binary_sensor\n";
         ha_buf txt;
         ha_agent_init(&b, &cfg, &id, NULL, NULL, t);
         ha_agent_load_published(&b, saved, strlen(saved));
-        CHECK(b.have_published && b.published.n == 3);
+        CHECK(b.have_published && b.published.n == 4);
+        CHECK(strcmp(b.published.c[3].key, "queue_gone_problem") == 0 &&
+              strcmp(b.published.c[3].platform, "binary_sensor") == 0);
         base_sample(&smp);
         CHECK(ha_agent_sample(&b, &smp, t));
         CHECK(ha_agent_begin(&b, t));
@@ -680,6 +880,7 @@ static void test_agent(void)
                     pub.topic_len == strlen("homeassistant/device/n_1/config")) {
                     char *doc = (char *)pub.payload;
                     c = strstr(doc, "\"nic_gone_rx\":{\"p\":\"sensor\"}") != NULL &&
+                        strstr(doc, "\"queue_gone_problem\":{\"p\":\"binary_sensor\"}") != NULL &&
                         strstr(doc, "\"cpu\":{\"p\":\"sensor\",\"unique_id\"") != NULL;
                 }
             ha_mqtt_dec_free(&d);
@@ -691,6 +892,8 @@ static void test_agent(void)
         ha_agent_published_text(&b, &txt);
         CHECK(strstr((char *)txt.p, "nic_gone_rx") == NULL);
         CHECK(strncmp((char *)txt.p, "cpu\ncpu_interrupt\n", 18) == 0);
+        CHECK(strstr((char *)txt.p, "\ndisk_dka0_problem binary_sensor\n") != NULL);
+        CHECK(strstr((char *)txt.p, "\ndisk_dka0_errors\n") != NULL);
         ha_buf_free(&txt);
         ha_agent_free(&b);
     }
@@ -749,6 +952,7 @@ int main(void)
     test_slug();
     test_iso8601();
     test_model();
+    test_phase3();
     test_session();
     test_agent();
     test_conf();

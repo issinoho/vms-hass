@@ -31,6 +31,8 @@ struct ha_agent_cfg {
     struct ha_model_cfg model;
     struct ha_sess_cfg sess;
     unsigned interval_s;
+    const char *queues;                 /* QUEUES: NULL or "*" all, "NONE" none, else names */
+    unsigned error_hold_s;              /* ERROR_HOLD in seconds */
 };
 
 typedef struct ha_agent {
@@ -44,6 +46,7 @@ typedef struct ha_agent {
     int nsamples;
     uint64_t prev_at, cur_at, next_sample;
     struct ha_figures fig;
+    struct ha_track track;
 
     struct ha_comp_set comps;           /* for the current sample */
     struct ha_comp_set published;       /* in the last discovery sent */
@@ -71,6 +74,9 @@ int ha_agent_tick(ha_agent *a, uint64_t now);
 uint64_t ha_agent_wake_in(const ha_agent *a, uint64_t now);
 
 int ha_agent_sample_due(const ha_agent *a, uint64_t now);
+/* 1 if QUEUES (`list`) selects the queue `name` */
+int ha_agent_queue_wanted(const char *list, const char *name);
+
 /* a new sample; publishes the state (and discovery, if sensors changed) when up */
 int ha_agent_sample(ha_agent *a, const struct ha_sample *s, uint64_t now);
 

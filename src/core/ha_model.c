@@ -70,11 +70,90 @@ void ha_model_figures(const struct ha_sample *prev, const struct ha_sample *cur,
     f->have_rates = 1;
 }
 
+void ha_track_update(struct ha_track *t, const struct ha_sample *s, uint64_t now,
+                     uint64_t hold_ms, struct ha_figures *f)
+{
+    struct ha_track old = *t;
+    int i, j;
+    /* rebuilt from the current sample: a disk or set that goes away is forgotten,
+       and one that comes back starts afresh */
+    t->ndisk = 0;
+    for (i = 0; i < s->ndisk && i < HA_MAX_DISK; i++) {
+        const struct ha_disk *d = &s->disk[i];
+        int rose = 0;
+        uint64_t rose_at = 0;
+        for (j = 0; j < old.ndisk; j++) {
+            if (strcmp(old.disk[j].name, d->name) != 0)
+                continue;
+            rose = old.disk[j].rose;
+            rose_at = old.disk[j].rose_at;
+            if (d->errors > old.disk[j].errors) {
+                rose = 1;
+                rose_at = now;
+            }
+            break;
+        }
+        ha_strlcpy(t->disk[t->ndisk].name, d->name, HA_NAME);
+        t->disk[t->ndisk].errors = d->errors;
+        t->disk[t->ndisk].rose = rose;
+        t->disk[t->ndisk].rose_at = rose_at;
+        t->ndisk++;
+        f->disk_problem[i] = d->mntver || d->offline || (rose && now - rose_at < hold_ms);
+    }
+    t->nshadow = 0;
+    for (i = 0; i < s->nshadow && i < HA_MAX_SHADOW; i++) {
+        const struct ha_shadow *sh = &s->shadow[i];
+        int most = sh->members;
+        for (j = 0; j < old.nshadow; j++)
+            if (strcmp(old.shadow[j].name, sh->name) == 0) {
+                if (old.shadow[j].most > most)
+                    most = old.shadow[j].most;
+                break;
+            }
+        ha_strlcpy(t->shadow[t->nshadow].name, sh->name, HA_NAME);
+        t->shadow[t->nshadow].most = most;
+        t->nshadow++;
+        if (sh->copying)
+            f->shadow_state[i] = HA_SHADOW_COPYING;
+        else if (sh->merging)
+            f->shadow_state[i] = HA_SHADOW_MERGING;
+        else if (sh->failed > 0 || sh->members < most)
+            f->shadow_state[i] = HA_SHADOW_DEGRADED;
+        else
+            f->shadow_state[i] = HA_SHADOW_STEADY;
+    }
+}
+
+const char *const ha_queue_states[] = {
+    "stopped", "stopping", "stalled", "paused", "starting", "unavailable", "busy", "idle",
+    "available", NULL
+};
+const char *const ha_shadow_states[] = { "steady", "copying", "merging", "degraded", NULL };
+
+const char *ha_queue_state(unsigned st)
+{
+    /* the most urgent first: a stopped queue may still say idle */
+    if (st & HA_Q_STOPPED) return "stopped";
+    if (st & HA_Q_STOPPING) return "stopping";
+    if (st & HA_Q_STALLED) return "stalled";
+    if (st & HA_Q_PAUSED) return "paused";
+    if (st & HA_Q_STARTING) return "starting";
+    if (st & HA_Q_UNAVAILABLE) return "unavailable";
+    if (st & HA_Q_BUSY) return "busy";
+    if (st & HA_Q_IDLE) return "idle";
+    return "available";
+}
+
+int ha_queue_problem(unsigned st)
+{
+    return (st & (HA_Q_STOPPED | HA_Q_STOPPING | HA_Q_STALLED | HA_Q_PAUSED | HA_Q_UNAVAILABLE)) != 0;
+}
+
 static struct ha_comp *add(struct ha_comp_set *set, int src, int idx, const char *key,
                            const char *name)
 {
     struct ha_comp *c;
-    if (set->n >= HA_MAX_COMP)
+    if (set->n >= HA_MAX_COMP || strlen(key) >= HA_KEY)
         return NULL;
     c = &set->c[set->n++];
     memset(c, 0, sizeof *c);
@@ -119,6 +198,40 @@ static void count(struct ha_comp_set *set, int src, const char *key, const char 
         return;
     c->state_class = "measurement";
     c->icon = icon;
+    c->diagnostic = diagnostic;
+}
+
+static void problem(struct ha_comp_set *set, int src, int idx, const char *key, const char *name)
+{
+    struct ha_comp *c = add(set, src, idx, key, name);
+    if (!c)
+        return;
+    c->platform = "binary_sensor";
+    c->device_class = "problem";
+    c->expires = 1;
+}
+
+static void choice(struct ha_comp_set *set, int src, int idx, const char *key, const char *name,
+                   const char *icon, const char *const *options)
+{
+    struct ha_comp *c = add(set, src, idx, key, name);
+    if (!c)
+        return;
+    c->device_class = "enum";
+    c->options = options;
+    c->icon = icon;
+    c->expires = 1;
+}
+
+static void tally(struct ha_comp_set *set, int src, int idx, const char *key, const char *name,
+                  const char *icon, int diagnostic)
+{
+    struct ha_comp *c = add(set, src, idx, key, name);
+    if (!c)
+        return;
+    c->state_class = "measurement";
+    c->icon = icon;
+    c->precision = 0;
     c->diagnostic = diagnostic;
 }
 
@@ -179,6 +292,60 @@ void ha_model_components(const struct ha_sample *s, struct ha_comp_set *set)
         snprintf(key, sizeof key, "disk_%s_size", slug);
         snprintf(name, sizeof name, "%s size", dev);
         size(set, HA_SRC_DISK_SIZE, i, key, name, "GiB", 2, 1);
+        snprintf(key, sizeof key, "disk_%s_errors", slug);
+        snprintf(name, sizeof name, "%s errors", dev);
+        if ((c = add(set, HA_SRC_DISK_ERRORS, i, key, name)) != NULL) {
+            /* the count starts again at a reboot: total_increasing takes that as
+               a new cycle, not a fall */
+            c->state_class = "total_increasing";
+            c->icon = "mdi:alert-circle-outline";
+            c->precision = 0;
+        }
+        snprintf(key, sizeof key, "disk_%s_problem", slug);
+        snprintf(name, sizeof name, "%s problem", dev);
+        problem(set, HA_SRC_DISK_PROBLEM, i, key, name);
+    }
+    for (i = 0; i < s->nshadow; i++) {
+        if (!ha_slug(slug, sizeof slug, s->shadow[i].name))
+            continue;
+        display_dev(dev, sizeof dev, s->shadow[i].name);
+        snprintf(key, sizeof key, "shadow_%s_state", slug);
+        snprintf(name, sizeof name, "%s shadow set", dev);
+        choice(set, HA_SRC_SHADOW_STATE, i, key, name, "mdi:content-copy", ha_shadow_states);
+        snprintf(key, sizeof key, "shadow_%s_members", slug);
+        snprintf(name, sizeof name, "%s members", dev);
+        tally(set, HA_SRC_SHADOW_MEMBERS, i, key, name, "mdi:harddisk-plus", 0);
+        snprintf(key, sizeof key, "shadow_%s_progress", slug);
+        snprintf(name, sizeof name, "%s copy or merge", dev);
+        pct(set, HA_SRC_SHADOW_PROGRESS, i, key, name, "mdi:progress-clock");
+        if (set->n && set->c[set->n - 1].src == HA_SRC_SHADOW_PROGRESS)
+            set->c[set->n - 1].precision = 0;
+        snprintf(key, sizeof key, "shadow_%s_problem", slug);
+        snprintf(name, sizeof name, "%s shadow set problem", dev);
+        problem(set, HA_SRC_SHADOW_PROBLEM, i, key, name);
+    }
+    for (i = 0; i < s->nqueue; i++) {
+        const char *q = s->queue[i].name;
+        if (!ha_slug(slug, sizeof slug, q))
+            continue;
+        snprintf(key, sizeof key, "queue_%s_state", slug);
+        snprintf(name, sizeof name, "%s", q);
+        choice(set, HA_SRC_QUEUE_STATE, i, key, name, s->queue[i].generic ? "mdi:tray-full" : "mdi:tray",
+               ha_queue_states);
+        snprintf(key, sizeof key, "queue_%s_pending", slug);
+        snprintf(name, sizeof name, "%s pending", q);
+        tally(set, HA_SRC_QUEUE_PENDING, i, key, name, "mdi:timer-sand", 0);
+        snprintf(key, sizeof key, "queue_%s_executing", slug);
+        snprintf(name, sizeof name, "%s executing", q);
+        tally(set, HA_SRC_QUEUE_EXECUTING, i, key, name, "mdi:play-circle-outline", 0);
+        snprintf(key, sizeof key, "queue_%s_problem", slug);
+        snprintf(name, sizeof name, "%s problem", q);
+        problem(set, HA_SRC_QUEUE_PROBLEM, i, key, name);
+    }
+    if (s->cluster.member) {
+        tally(set, HA_SRC_CLUSTER_NODES, 0, "cluster_nodes", "Cluster nodes", "mdi:server-network", 0);
+        tally(set, HA_SRC_CLUSTER_VOTES, 0, "cluster_votes", "Cluster votes", "mdi:vote", 1);
+        tally(set, HA_SRC_CLUSTER_QUORUM, 0, "cluster_quorum", "Cluster quorum", "mdi:vote-outline", 1);
     }
     for (i = 0; i < s->nnic; i++) {
         if (!ha_slug(slug, sizeof slug, s->nic[i].name))
@@ -273,11 +440,18 @@ int ha_model_discovery(const struct ha_model_cfg *cfg, const struct ha_identity 
             ha_json_str(&j, "entity_category", "diagnostic");
         if (c->precision >= 0)
             ha_json_int(&j, "suggested_display_precision", c->precision);
+        if (c->options) {
+            int k;
+            ha_json_arr(&j, "options");
+            for (k = 0; c->options[k]; k++)
+                ha_json_str(&j, NULL, c->options[k]);
+            ha_json_end(&j);
+        }
         if (c->disabled)
             ha_json_bool(&j, "enabled_by_default", 0);
         /* per component: HA 2026.10 refuses expire_after among the shared
            options at the top level (NOTES.md 3) */
-        if (cfg->expire_after_s > 0 && c->state_class)
+        if (cfg->expire_after_s > 0 && (c->state_class || c->expires))
             ha_json_int(&j, "expire_after", cfg->expire_after_s);
         snprintf(tmpl, sizeof tmpl, "{{ value_json.%s }}", c->key);
         ha_json_str(&j, "value_template", tmpl);
@@ -391,6 +565,63 @@ int ha_model_state(const struct ha_comp_set *set, const struct ha_sample *s,
                 ha_json_null(&j, key);
             break;
         }
+        case HA_SRC_DISK_ERRORS:
+            if (i < 0 || i >= s->ndisk)
+                ha_json_null(&j, key);
+            else
+                ha_json_int(&j, key, (long)s->disk[i].errors);
+            break;
+        case HA_SRC_DISK_PROBLEM:
+            ha_json_str(&j, key, i >= 0 && i < s->ndisk && f->disk_problem[i] ? "ON" : "OFF");
+            break;
+        case HA_SRC_SHADOW_STATE:
+        case HA_SRC_SHADOW_PROBLEM: {
+            int st = i >= 0 && i < s->nshadow ? f->shadow_state[i] : HA_SHADOW_STEADY;
+            if (st < 0 || st > HA_SHADOW_DEGRADED)
+                st = HA_SHADOW_DEGRADED;
+            if (c->src == HA_SRC_SHADOW_STATE)
+                ha_json_str(&j, key, ha_shadow_states[st]);
+            else
+                ha_json_str(&j, key, st != HA_SHADOW_STEADY ? "ON" : "OFF");
+            break;
+        }
+        case HA_SRC_SHADOW_MEMBERS:
+            if (i < 0 || i >= s->nshadow)
+                ha_json_null(&j, key);
+            else
+                ha_json_int(&j, key, s->shadow[i].members);
+            break;
+        case HA_SRC_SHADOW_PROGRESS:
+            if (i < 0 || i >= s->nshadow || s->shadow[i].progress < 0 ||
+                !(s->shadow[i].copying || s->shadow[i].merging))
+                ha_json_null(&j, key);
+            else
+                ha_json_int(&j, key, s->shadow[i].progress > 100 ? 100 : s->shadow[i].progress);
+            break;
+        case HA_SRC_QUEUE_STATE:
+        case HA_SRC_QUEUE_PENDING:
+        case HA_SRC_QUEUE_EXECUTING:
+        case HA_SRC_QUEUE_PROBLEM:
+            if (i < 0 || i >= s->nqueue)
+                ha_json_null(&j, key);
+            else if (c->src == HA_SRC_QUEUE_STATE)
+                ha_json_str(&j, key, ha_queue_state(s->queue[i].status));
+            else if (c->src == HA_SRC_QUEUE_PENDING)
+                ha_json_int(&j, key, s->queue[i].pending);
+            else if (c->src == HA_SRC_QUEUE_EXECUTING)
+                ha_json_int(&j, key, s->queue[i].executing);
+            else
+                ha_json_str(&j, key, ha_queue_problem(s->queue[i].status) ? "ON" : "OFF");
+            break;
+        case HA_SRC_CLUSTER_NODES:
+            ha_json_int(&j, key, s->cluster.nodes);
+            break;
+        case HA_SRC_CLUSTER_VOTES:
+            ha_json_int(&j, key, s->cluster.votes);
+            break;
+        case HA_SRC_CLUSTER_QUORUM:
+            ha_json_int(&j, key, s->cluster.quorum);
+            break;
         default:
             ha_json_null(&j, key);
         }

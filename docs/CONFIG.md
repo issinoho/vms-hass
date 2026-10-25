@@ -19,6 +19,8 @@ or the environment variable `HASS_AGENT_<NAME>` on Linux.
 | `TOPIC_PREFIX` | openvms | The first level of the state and availability topics. |
 | `NODE_ID` | made on first run (D5) | Lower-case letters, digits and single `_`. Never change it once published. |
 | `DEVICE_NAME` | the node name | The device's name in HA. Users can rename it in HA too. |
+| `QUEUES` | `*` | Which queues to report: `*` for every execution queue on this node and every generic queue, `NONE` for none, or a comma-separated list of names. |
+| `ERROR_HOLD` | 60 | Minutes a disk's problem sensor stays on after its error count rises, 1 to 10080 (D8). |
 | `LOG_LEVEL` | info | debug, info, warn or error. |
 | `DATA_DIR` | the platform's | Where `node_id` is kept. |
 

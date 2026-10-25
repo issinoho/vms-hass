@@ -7,6 +7,18 @@
  *     rx <bytes/s>  tx <bytes/s>  on EWA0, defaults 20000 / 5000
  *     disks <dev>[,<dev>...]      mounted disks, default DKA0:,DKA100:
  *     reset                       counters start again, as after a reboot
+ *     errors <dev> <n>            a disk's error count (default 0)
+ *     mntver <dev>                that disk is in mount verification
+ *     offline <dev>               that disk is not online
+ *     shadow <dsa> <members> <devices> <failed> steady|copying|merging [<pct>]
+ *                                 a mounted shadow set (also listed as a disk)
+ *     queue <name> <state> <pending> <executing> [generic]
+ *                                 replaces the default queues; <state> is any of
+ *                                 stopped,stopping,stalled,paused,starting,
+ *                                 unavailable,busy,idle,closed joined by '+'
+ *     queues none                 no queues at all
+ *     cluster <nodes> <votes> <quorum>    a cluster member (default: not one)
+ * Without queue lines the node has SYS$BATCH (generic) and <node>_BATCH, idle.
  * HA_STUB_NODE names the node (default STUBVMS).  Settings come from
  * HASS_AGENT_<NAME> environment variables, then the config file.
  */
@@ -31,6 +43,15 @@ static struct ha_cpu_modes acc;         /* cumulative, ticks of 10 ms */
 static uint64_t rx_acc, tx_acc;
 static double cpu_pct = 20, rx_rate = 20000, tx_rate = 5000;
 static char disks[256] = "DKA0:,DKA100:";
+
+#define MAX_EXTRA 32
+static struct { char dev[HA_NAME]; uint32_t errors; int mntver, offline; } dstat[MAX_EXTRA];
+static int ndstat;
+static struct ha_shadow shadows[HA_MAX_SHADOW];
+static int nshadows;
+static struct ha_queue queues[HA_MAX_QUEUE];
+static int nqueues, queues_given;
+static struct ha_cluster cluster;
 
 static void on_signal(int sig)
 {
@@ -190,16 +211,108 @@ int ha_plat_identity(struct ha_identity *id)
     return 1;
 }
 
+static int dstat_at(const char *dev)
+{
+    int i;
+    for (i = 0; i < ndstat; i++)
+        if (strcmp(dstat[i].dev, dev) == 0)
+            return i;
+    if (ndstat == MAX_EXTRA)
+        return -1;
+    memset(&dstat[ndstat], 0, sizeof dstat[ndstat]);
+    ha_strlcpy(dstat[ndstat].dev, dev, HA_NAME);
+    return ndstat++;
+}
+
+static unsigned queue_status(const char *words)
+{
+    static const struct { const char *w; unsigned bit; } map[] = {
+        { "stopped", HA_Q_STOPPED }, { "stopping", HA_Q_STOPPING }, { "stalled", HA_Q_STALLED },
+        { "paused", HA_Q_PAUSED }, { "starting", HA_Q_STARTING }, { "unavailable", HA_Q_UNAVAILABLE },
+        { "busy", HA_Q_BUSY }, { "idle", HA_Q_IDLE }, { "closed", HA_Q_CLOSED }
+    };
+    unsigned st = 0;
+    size_t i, n;
+    while (*words) {
+        n = strcspn(words, "+");
+        for (i = 0; i < sizeof map / sizeof map[0]; i++)
+            if (strlen(map[i].w) == n && strncmp(words, map[i].w, n) == 0)
+                st |= map[i].bit;
+        words += n;
+        if (*words == '+')
+            words++;
+    }
+    return st;
+}
+
 static void read_control(void)
 {
     const char *path = getenv("HA_STUB_CONTROL");
     FILE *f;
-    char line[300];
+    char line[300], a[64], b[64];
     double v;
+    int x, y, z, w;
+    /* the control file describes the whole state each time */
+    ndstat = 0;
+    nshadows = 0;
+    nqueues = 0;
+    queues_given = 0;
+    memset(&cluster, 0, sizeof cluster);
     if (!path || !(f = fopen(path, "r")))
         return;
     while (fgets(line, sizeof line, f)) {
+        int i;
         line[strcspn(line, "\r\n")] = 0;
+        if (sscanf(line, "errors %63s %d", a, &x) == 2 && (i = dstat_at(a)) >= 0) {
+            dstat[i].errors = (uint32_t)x;
+            continue;
+        }
+        if (sscanf(line, "mntver %63s", a) == 1 && (i = dstat_at(a)) >= 0) {
+            dstat[i].mntver = 1;
+            continue;
+        }
+        if (sscanf(line, "offline %63s", a) == 1 && (i = dstat_at(a)) >= 0) {
+            dstat[i].offline = 1;
+            continue;
+        }
+        if (sscanf(line, "shadow %63s %d %d %d %63s", a, &x, &y, &z, b) == 5 && nshadows < HA_MAX_SHADOW) {
+            struct ha_shadow *sh = &shadows[nshadows++];
+            memset(sh, 0, sizeof *sh);
+            ha_strlcpy(sh->name, a, sizeof sh->name);
+            sh->members = x;
+            sh->devices = y;
+            sh->failed = z;
+            sh->copying = strcmp(b, "copying") == 0;
+            sh->merging = strcmp(b, "merging") == 0;
+            sh->progress = -1;
+            if (sscanf(line, "shadow %*s %*d %*d %*d %*s %d", &w) == 1)
+                sh->progress = w;
+            continue;
+        }
+        if (strcmp(line, "queues none") == 0) {
+            queues_given = 1;
+            continue;
+        }
+        if (sscanf(line, "queue %63s %63s %d %d", a, b, &x, &y) == 4) {
+            queues_given = 1;
+            if (nqueues < HA_MAX_QUEUE) {
+                struct ha_queue *q = &queues[nqueues++];
+                memset(q, 0, sizeof *q);
+                ha_strlcpy(q->name, a, sizeof q->name);
+                q->status = queue_status(b);
+                q->pending = x;
+                q->executing = y;
+                q->generic = strstr(line, " generic") != NULL;
+            }
+            continue;
+        }
+        if (sscanf(line, "cluster %d %d %d", &x, &y, &z) == 3) {
+            cluster.member = 1;
+            cluster.nodes = x;
+            cluster.votes = y;
+            cluster.quorum = z;
+            continue;
+        }
         if (sscanf(line, "cpu %lf", &v) == 1)
             cpu_pct = v < 0 ? 0 : v > 100 ? 100 : v;
         else if (sscanf(line, "rx %lf", &v) == 1)
@@ -250,8 +363,15 @@ int ha_plat_sample(struct ha_sample *s)
         size_t n = strcspn(p, ",");
         struct ha_disk *d = &s->disk[s->ndisk];
         if (n && ha_strlcpyn(d->name, sizeof d->name, p, n)) {
+            int i;
             d->total = 21474836480ULL;      /* 20 GiB, 10 GiB free */
             d->free = 10737418240ULL;
+            for (i = 0; i < ndstat; i++)
+                if (strcmp(dstat[i].dev, d->name) == 0) {
+                    d->errors = dstat[i].errors;
+                    d->mntver = dstat[i].mntver;
+                    d->offline = dstat[i].offline;
+                }
             s->ndisk++;
         }
         p += n;
@@ -263,6 +383,20 @@ int ha_plat_sample(struct ha_sample *s)
     s->nic[0].rx = rx_acc;
     s->nic[0].tx = tx_acc;
     strcpy(s->nic[1].name, "EWB0");         /* configured, never used: no traffic */
+    memcpy(s->shadow, shadows, sizeof shadows);
+    s->nshadow = nshadows;
+    if (queues_given) {
+        memcpy(s->queue, queues, sizeof queues);
+        s->nqueue = nqueues;
+    } else {
+        const char *n = getenv("HA_STUB_NODE");
+        s->nqueue = 2;
+        strcpy(s->queue[0].name, "SYS$BATCH");
+        s->queue[0].generic = 1;
+        snprintf(s->queue[1].name, sizeof s->queue[1].name, "%.20s_BATCH", n ? n : "STUBVMS");
+        s->queue[1].status = HA_Q_IDLE;
+    }
+    s->cluster = cluster;
     return 1;
 }
 

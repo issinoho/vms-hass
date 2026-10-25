@@ -51,6 +51,17 @@ The Mosquitto 2 broker in the app answers a wrong password with return code 5, n
   kept; `value_template` picks a field out of the JSON state. `entity_category:
   diagnostic` for identity fields. (<https://www.home-assistant.io/integrations/sensor.mqtt/>,
   <https://developers.home-assistant.io/docs/core/entity/sensor/>.)
+- **Enum sensors** (Phase 3): `device_class: enum` with `options`, the list of every
+  state the sensor can have. An enum sensor takes no `unit_of_measurement` and no
+  `state_class`. (sensor.mqtt, `options`; the developer docs, "Available device
+  classes", ENUM.)
+- **Binary sensors** (Phase 3): platform `binary_sensor`. The template must render
+  `payload_on` or `payload_off`, by default `ON` and `OFF`. `device_class: problem`
+  shows them as "Problem"/"OK". `expire_after`, `value_template` and the shared
+  `state_topic`/`availability_topic` work as for sensors. A binary sensor is
+  removed with `{"p": "binary_sensor"}`.
+  (<https://www.home-assistant.io/integrations/binary_sensor.mqtt/>,
+  <https://www.home-assistant.io/integrations/binary_sensor/>, "Device class".)
 
 Seen working on HA 2026.10.3 with `probes/mqtt_probe.c` (NOTES.md 2) and with the
 Phase 1 agent (NOTES.md 3).

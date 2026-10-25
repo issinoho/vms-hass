@@ -110,3 +110,37 @@ readable in topics.
 `MQTT_PASSWORD_FILE` names a file holding one line. The agent refuses to start if
 group or world can read it, never logs it, and clears it from memory on exit. There
 is no inline password setting: configuration files get copied, mailed and committed.
+
+## D8. Phase 3: what is published, and when a problem sensor is on
+
+**Status:** agreed with the user 2026-10-25 (shadow sets tested on Linux only; a
+temporary test queue on each node is fine).
+
+Each problem sensor is an MQTT `binary_sensor` with `device_class: problem`, so it
+shows as "Problem"/"OK" and an automation can trigger on it. Each state sensor is an
+`enum` sensor with a fixed list of options.
+
+- **Disks** (every disk already reported): `errors` (the device error count;
+  `total_increasing`, so a reboot's reset is not a fall) and `problem`. Problem is on
+  while mount verification is in progress, the device is not online, or the error
+  count rose in the last ERROR_HOLD minutes (default 60). A shadow set's virtual unit
+  reports the sum of its members' counts: the members themselves are not reported.
+- **Shadow sets** (each mounted DSA): `state` (steady, copying, merging, degraded),
+  `members` (full members), `progress` (% of the copy or merge, empty when steady) and
+  `problem` (on unless steady). **Degraded** means a failed member, or fewer full
+  members than the set had at any time since the agent started. Restarting the agent
+  accepts the current membership. A count from a configuration file would be more
+  exact, but would be wrong as soon as someone changed the set and forgot the file.
+- **Queues:** every execution queue on this node, and every generic queue, unless
+  QUEUES lists names. `state` (stopped, stopping, stalled, paused, starting,
+  unavailable, busy, idle, available), `pending`, `executing` and `problem` (on when
+  stopped, stopping, stalled, paused or unavailable). In a cluster each member
+  reports the generic queues too.
+- **Cluster** (only when the node is a cluster member): `cluster_nodes`, and
+  `cluster_votes` and `cluster_quorum` as diagnostics. Each node reports its own view
+  on its own device. A separate "cluster" device would be written by every member,
+  and the last writer would win.
+- **Error log: dropped.** Reading ERRLOG.SYS needs a privilege and a parser for its
+  binary records. The disk error counts cover what an alert needs.
+
+Limits: 32 queues, 16 shadow sets, 400 components per node.
