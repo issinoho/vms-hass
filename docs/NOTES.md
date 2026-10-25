@@ -109,6 +109,11 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
   HA's template engine before use.
 - When a node's disks or NICs change, rerun the generator: the dashboard does not
   follow sensors by itself.
+- Phase 3 queue list, chosen by the user on 2026-10-25 (the TCP/IP queues included):
+
+      tools/dashboard.py \
+        x86vms:dka0,dka200,dka300,ldm2585:eia0:sys_batch,x86vms_batch,lpd_ts7500i,tcpip_lpd_in,tcpip_lpd_in_x86vms_1,tcpip_smtp,tcpip_smtp_x86vms_1 \
+        myi64:dka800:ewb0:sys_batch,canon,tcpip_lpd_in,tcpip_lpd_in_myi64_1,tcpip_smtp,tcpip_smtp_myi64_1
 
 ## 7. What Phase 3 has to work with (2026-10-25, probes/p3_survey*.com)
 
