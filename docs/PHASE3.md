@@ -1,8 +1,7 @@
 # Phase 3: VMS-specific state
 
 **Status:** live on both nodes, and the exit test passed in HA (NOTES.md 11).
-Still to do: put the new dashboard on HA (generated and checked; the write needs
-the user's permission), then the user's exit review.
+The dashboard is updated on HA. Waiting for the user's exit review.
 
 ## What was built (D8)
 

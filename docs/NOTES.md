@@ -206,3 +206,7 @@ batch logs (AGENT_RUN.LOG on each node).
   idle, stopped, idle, and pending 0, 1, 0, each about 8 s after the change on the
   node. Deleting the queue removed its four entities from HA (none left in a
   search afterwards), and the procedure removed its job file and log.
+- The "OpenVMS" dashboard was replaced, with the user's OK, by the generator's
+  output for the Phase 3 queue list (NOTES.md 6). HA's write verified itself, and a
+  search of the stored config finds the 2 Problems cards, a problem tile for each
+  of the 5 disks and the 14 queue problem tiles.
