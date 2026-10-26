@@ -258,3 +258,6 @@ batch logs (AGENT_RUN.LOG on each node).
   run left `SYS$SPECIFIC:[SYSMGR]SYSHUTDWN.COM;1` (the old lines plus HASS) in front
   of `SYS$COMMON:[SYSMGR]SYSHUTDWN.COM;5`. It works, as it is found first, but
   shadows the real one. The procedure now writes where `F$SEARCH` finds the file.
+  With the user's OK it was deleted, and the HASS line added as
+  `SYS$COMMON:[SYSMGR]SYSHUTDWN.COM;6` (`;5` is the backup); nothing is left in
+  SYS$SPECIFIC.
