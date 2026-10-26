@@ -242,3 +242,19 @@ batch logs (AGENT_RUN.LOG on each node).
   and HA has no new device or `_2` entity.
 - `tools/kit.sh` on IA64 twice came back with an empty log over ssh (as vms-beszel
   saw); a rerun worked each time.
+
+## 13. The boot lines (2026-10-26, probes/boot_lines.com, asked for by the user)
+
+- Both nodes' `SYSTARTUP_VMS.COM` run their products from a numbered list
+  (`st_<n> = "label|procedure"`), which stops at the first missing number. The agent
+  is the last service: `st_56` on x86, `st_47` on IA64. `SYSHUTDWN.COM` has
+  `$ @SYS$STARTUP:HASS$SHUTDOWN.COM` at the end. Each is a new version, so the one
+  before is the backup.
+- IA64's `SYSHUTDWN.COM` called `BESZEL$SHTDOWN.COM`, so beszel's agent was never
+  stopped cleanly at shutdown. Fixed at the user's request.
+- **`SYS$MANAGER` is a search list** (SYS$SPECIFIC, then SYS$COMMON).
+  `SYSTARTUP_VMS.COM` is in SYS$SPECIFIC and `SYSHUTDWN.COM` in SYS$COMMON on both.
+  `OPEN/WRITE SYS$MANAGER:x` creates the new file in SYS$SPECIFIC, so the first x86
+  run left `SYS$SPECIFIC:[SYSMGR]SYSHUTDWN.COM;1` (the old lines plus HASS) in front
+  of `SYS$COMMON:[SYSMGR]SYSHUTDWN.COM;5`. It works, as it is found first, but
+  shadows the real one. The procedure now writes where `F$SEARCH` finds the file.
