@@ -24,7 +24,8 @@ Setting up (as SYSTEM)
      $ @HASS$ROOT:[COM]HASS$CONFIGURE
 
    It asks for the account (default HASS) and, for a new account, its UIC:
-   choose a group of its own, above MAXSYSGROUP (e.g. [376,1]).  The account
+   choose a group of its own, above MAXSYSGROUP, that no other account uses
+   (e.g. [363,1]; AUTHORIZE SHOW [363,*] lists any).  The account
    gets NETMBX and TMPMBX only and can't log in by any route; the agent still
    runs as it.  Run it again at any time: it changes only an account it
    created.

@@ -94,11 +94,11 @@ $! ---- a new account ----
 $new_account:
 $ uic = f$edit(p2, "UPCASE,TRIM")
 $ if uic .eqs. "" .and. interactive then -
-     inquire uic "UIC for ''account', a group of its own above ''maxsys' (e.g. [377,1])"
+     inquire uic "UIC for ''account', a group of its own above ''maxsys' (e.g. [363,1])"
 $ uic = f$edit(uic, "UPCASE,TRIM")
 $ if uic .eqs. "" .or. f$extract(0, 1, uic) .nes. "[" .or. f$locate(",", uic) .eq. f$length(uic)
 $ then
-$   say "HASS$CONFIGURE: ''account' is a new account: give its UIC, e.g. [377,1]"
+$   say "HASS$CONFIGURE: ''account' is a new account: give its UIC, e.g. [363,1]"
 $   exit 44
 $ endif
 $ grp = f$integer("%O" + (f$element(0, ",", uic) - "["))
@@ -108,6 +108,25 @@ $   say "HASS$CONFIGURE: group ", f$fao("!OL", grp), " is a system group (MAXSYS
         "): choose a group above it (D9)"
 $   exit 44
 $ endif
+$ ! a group of its own: refuse one that other accounts use (DECnet's servers
+$ ! are in [376,*] on many systems, for example).  SHOW/BRIEF lists each
+$ ! account with its UIC, "[363,1]"; with none, it lists nothing.
+$ g = f$element(0, ",", uic) - "["
+$ define/user sys$output 'work'
+$ define/user sys$error 'work'
+$ define/user sysuaf 'uaf'
+$ mcr authorize show/brief ['g',*]
+$ search/nooutput/exact 'work' "[''g',"
+$ ingroup = $severity .eq. 1
+$ if ingroup
+$ then
+$   say "HASS$CONFIGURE: other accounts already use group ", g, ":"
+$   type 'work'
+$   delete/nolog 'work';*
+$   say "  choose a group of the agent's own (D9)"
+$   exit 44
+$ endif
+$ delete/nolog 'work';*
 $ ! a password nobody needs: 32 random characters from OpenSSL's generator
 $ agent := $HASS$ROOT:[BIN]HASS_AGENT.EXE
 $ define/user sys$output 'work'

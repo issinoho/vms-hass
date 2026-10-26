@@ -210,3 +210,35 @@ batch logs (AGENT_RUN.LOG on each node).
   output for the Phase 3 queue list (NOTES.md 6). HA's write verified itself, and a
   search of the stored config finds the 2 Problems cards, a problem tile for each
   of the 5 disks and the 14 queue problem tiles.
+
+## 12. Phase 4 install tests (2026-10-25/26, probes/install_test.com, in batch)
+
+- **UIC group 376 is DECnet's** on both nodes (MIRRO$SERVER, MAIL$SERVER and others
+  in `[376,*]`). The family's services use 360 (MariaDB), 361 (lighttpd), 362
+  (steward) and 377 (beszel); HASS is `[363,1]`. `HASS$CONFIGURE` now refuses a new
+  account's group if any account is in it.
+- **AUTHORIZE `SHOW/BRIEF [g,*]` with no match** writes nothing to a redirected
+  SYS$OUTPUT (the message isn't there either), so "no such user" can't be detected by
+  its text: the procedure looks for the UIC `[g,` instead. `F$FAO("!OL")` pads to 11
+  digits, so the group is taken from the UIC as typed.
+- **The agent deleted the stop file** on its way out, so `HASS$RUN` found no stop
+  request and started it again 15 s later (x86, 23:56:31). vms-beszel's agent leaves
+  it, and so does this one now; `HASS$CONTROL START` deletes it before starting.
+- **The account check came after the node ID.** Started as IAIN (the first configure
+  had failed, so `HASS$USER` was unset), the agent couldn't read `[DATA]`, took the
+  node ID as missing and tried to write a new one. The check now runs first, and a
+  node ID file that exists but can't be read is an error, never replaced.
+- **Exit status:** `return 1` from `main` is success on OpenVMS (`%X00000001`); errors
+  now return `EXIT_FAILURE`.
+- **`HASS$RUN` waited out its whole backoff** (up to 5 minutes) before seeing a stop
+  request; it now checks every 5 s.
+- Results, both nodes: install, configure (new account, then again on the existing
+  one), carry over AGENT.CONF, MQTT.PWD, NODE_ID and PUBLISHED from the hand-run
+  tree, START (as HASS via `HASS_LAUNCH`, NETMBX and TMPMBX only); STOP (clean:
+  "stop requested", offline), then with `HASS$ROOT` and `HASS$USER` deassigned
+  `@SYS$STARTUP:HASS$STARTUP` as a boot would (both defined again, agent started as
+  HASS); `PRODUCT REMOVE` (agent stopped, both names deassigned, CONF/DATA/LOG kept),
+  reinstall, configure, start. The node IDs stayed `x86vms_1025` and `myi64_1026`,
+  and HA has no new device or `_2` entity.
+- `tools/kit.sh` on IA64 twice came back with an empty log over ssh (as vms-beszel
+  saw); a rerun worked each time.

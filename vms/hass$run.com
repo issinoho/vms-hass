@@ -41,9 +41,15 @@ $ endif
 $! a long run resets the wait; quick failures back off
 $ if f$cvtime("''started'+0-00:10:00.00","COMPARISON") .les. f$cvtime("","COMPARISON") then delay = 15
 $ say "--- restarting in ", delay, " s"
-$ mins = delay / 60
-$ secs = delay - mins * 60
-$ wait 0:'mins':'secs'
+$! wait in 5 s steps, so HASS$CONTROL STOP is seen within 5 s
+$ waited = 0
+$wait_loop:
+$ if f$search("HASS$ROOT:[DATA]STOP.") .nes. "" then goto done
+$ if waited .ge. delay then goto waited_enough
+$ wait 0:0:5
+$ waited = waited + 5
+$ goto wait_loop
+$waited_enough:
 $ delay = delay * 2
 $ if delay .gt. 300 then delay = 300
 $ goto loop

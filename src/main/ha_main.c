@@ -100,6 +100,11 @@ static int node_id(char *out, size_t cap, const char *set, const char *dir,
         return 0;
     }
     ha_buf_free(&b);
+    if (ha_plat_exists(path)) {
+        /* never replace a node ID we merely can't read: HA would see a new device */
+        say(HA_LOG_ERROR, "cannot read the node ID in %s (check its owner and protection)", path);
+        return 0;
+    }
     if (!ha_node_id(out, cap, id->node, id->system_id)) {
         say(HA_LOG_ERROR, "cannot make a node ID from the node name \"%s\"", id->node);
         return 0;
@@ -182,10 +187,10 @@ static int print_mode(const struct ha_agent_cfg *cfg, const struct ha_identity *
     ha_model_components(&s2, &set);
     ha_buf_init(&b);
     if (!ha_model_discovery(&cfg->model, id, &set, NULL, &b))
-        return 1;
+        return EXIT_FAILURE;
     printf("%s\n", b.p);
     if (!ha_model_state(&set, &s2, &f, &b))
-        return 1;
+        return EXIT_FAILURE;
     printf("%s\n", b.p);
     ha_buf_free(&b);
     return 0;
@@ -220,7 +225,7 @@ int main(int argc, char **argv)
         char word[33];
         int i;
         if (!ha_net_random(r, sizeof r))
-            return 1;
+            return EXIT_FAILURE;
         for (i = 0; i < 32; i++)
             word[i] = set[r[i] % 36];         /* 256 % 36 = 4: a tiny bias, harmless here */
         word[32] = 0;
@@ -238,7 +243,13 @@ int main(int argc, char **argv)
     }
     path = argc > argi ? argv[argi] : ha_plat_default_config();
     if (!ha_plat_init())
-        return 1;
+        return EXIT_FAILURE;
+    /* D9: before anything else, so a process that must not run the agent
+       never reads its settings or touches DATA_DIR */
+    if (!remove_mode && !print_only && !ha_plat_check_account(err, sizeof err)) {
+        say(HA_LOG_ERROR, "%s", err);
+        return HA_EXIT_REFUSED;
+    }
 
     ha_conf_init(&conf, ha_plat_conf_override, NULL);
     ha_buf_init(&file);
@@ -246,11 +257,11 @@ int main(int argc, char **argv)
     if (ha_plat_read_file(path, &file)) {
         if (!ha_conf_parse(&conf, (const char *)file.p, file.len, err, sizeof err)) {
             say(HA_LOG_ERROR, "%s: %s", path, err);
-            { rc = 1; goto out; }
+            { rc = EXIT_FAILURE; goto out; }
         }
     } else if (argc > argi) {
         say(HA_LOG_ERROR, "cannot read the configuration file %s", path);
-        { rc = 1; goto out; }
+        { rc = EXIT_FAILURE; goto out; }
     }
 
     v = ha_conf_get(&conf, "LOG_LEVEL");
@@ -261,7 +272,7 @@ int main(int argc, char **argv)
         else if (ha_ieq(v, "error")) min_level = HA_LOG_ERROR;
         else {
             say(HA_LOG_ERROR, "LOG_LEVEL must be debug, info, warn or error");
-            { rc = 1; goto out; }
+            { rc = EXIT_FAILURE; goto out; }
         }
     }
 
@@ -294,7 +305,7 @@ int main(int argc, char **argv)
             !number(ha_conf_get(&conf, "MQTT_KEEPALIVE"), 10, 3600, 60, "MQTT_KEEPALIVE", &keepalive) ||
             !number(ha_conf_get(&conf, "INTERVAL"), 5, 3600, 30, "INTERVAL", &interval) ||
             !number(ha_conf_get(&conf, "ERROR_HOLD"), 1, 10080, 60, "ERROR_HOLD", &hold))
-            { rc = 1; goto out; }
+            { rc = EXIT_FAILURE; goto out; }
         tls = yes(ha_conf_get(&conf, "MQTT_TLS"));
         if (portn < 0)
             portn = tls ? 8883 : 1883;
@@ -302,29 +313,29 @@ int main(int argc, char **argv)
 
         ha_plat_identity(&id);
         if (!node_id(nid, sizeof nid, s_nodeid, dir, &id, !print_only))
-            { rc = 1; goto out; }
+            { rc = EXIT_FAILURE; goto out; }
         ha_strlcpy(dev_name, *s_devname ? s_devname : id.node, sizeof dev_name);
 
         if (!print_only) {
             if (!*host) {
                 say(HA_LOG_ERROR, "MQTT_HOST is not set (in %s or HASS_AGENT_MQTT_HOST)", path);
-                { rc = 1; goto out; }
+                { rc = EXIT_FAILURE; goto out; }
             }
             if (*user) {
                 t = ha_conf_get(&conf, "MQTT_PASSWORD_FILE");
                 if (!t || !*t) {
                     say(HA_LOG_ERROR, "MQTT_USER is set, so MQTT_PASSWORD_FILE must be too");
-                    { rc = 1; goto out; }
+                    { rc = EXIT_FAILURE; goto out; }
                 }
                 if (ha_plat_file_exposed(t)) {
                     say(HA_LOG_ERROR, "%s can be read by others: allow the owner only", t);
-                    { rc = 1; goto out; }
+                    { rc = EXIT_FAILURE; goto out; }
                 }
                 if (!ha_plat_read_file(t, &file) ||
                     !ha_conf_secret_file((const char *)file.p, file.len, &pw) || !pw.len) {
                     say(HA_LOG_ERROR, "cannot read one password line from %s", t);
                     wipe(&file);
-                    { rc = 1; goto out; }
+                    { rc = EXIT_FAILURE; goto out; }
                 }
                 wipe(&file);
             }
@@ -351,11 +362,6 @@ int main(int argc, char **argv)
     if (print_only)
         { rc = print_mode(&cfg, &id); goto out; }
 
-    if (!remove_mode && !ha_plat_check_account(err, sizeof err)) {
-        say(HA_LOG_ERROR, "%s", err);       /* D9: no privileges, no system account */
-        rc = HA_EXIT_REFUSED;
-        goto out;
-    }
     ha_plat_data_path(stop_path, sizeof stop_path, dir, "stop");
     if (!remove_mode && ha_plat_exists(stop_path)) {
         say(HA_LOG_INFO, "removing an old stop request %s", stop_path);
@@ -375,8 +381,8 @@ int main(int argc, char **argv)
     while (!ha_plat_stop_requested()) {
         uint64_t now = ha_plat_now_ms(), wait;
         if (!remove_mode && ha_plat_exists(stop_path)) {
+            /* left in place: HASS$RUN.COM sees it too, and doesn't restart us */
             say(HA_LOG_INFO, "stop requested (%s)", stop_path);
-            ha_plat_remove(stop_path);
             break;
         }
         ha_plat_poll();
@@ -395,7 +401,7 @@ int main(int argc, char **argv)
                 say(HA_LOG_INFO, "retrying in %llu s",
                     (unsigned long long)((retry_at - now + 500) / 1000));
                 if (remove_mode) {
-                    rc = 1;
+                    rc = EXIT_FAILURE;
                     break;
                 }
                 continue;
@@ -429,7 +435,7 @@ int main(int argc, char **argv)
                 }
                 if (ha_plat_now_ms() >= remove_deadline) {
                     say(HA_LOG_ERROR, "the broker did not confirm the removal");
-                    rc = 1;
+                    rc = EXIT_FAILURE;
                     break;
                 }
             }
@@ -452,7 +458,7 @@ drop:
             now = ha_plat_now_ms();
             ha_agent_closed(&agent, now);
             if (remove_mode) {
-                rc = 1;
+                rc = EXIT_FAILURE;
                 break;
             }
             retry_at = now + ha_agent_backoff_ms(&agent, ha_plat_random());

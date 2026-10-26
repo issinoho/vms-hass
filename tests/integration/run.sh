@@ -225,7 +225,8 @@ wait "$agent_pid"; rc=$?; agent_pid=
 check "it stops, exit status 0" test $rc -eq 0
 check "and says why" grep -q 'stop requested' agent2c.log
 check "availability offline" test "$(S -t "$AVAIL_T" -C 1 -W 3)" = offline
-check "the stop file is gone" test ! -e data/stop
+check "the stop file is left for HASS\$RUN to see" test -e data/stop
+rm -f data/stop
 
 echo "== plain MQTT to another machine (D10)"
 conf f.conf "MQTT_HOST=192.0.2.1" "DATA_DIR=$w/data3"
