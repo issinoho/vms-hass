@@ -1,9 +1,11 @@
 # Phase 4: run as a service, kit, release
 
 **Status:** the kits install, configure, start, stop, survive a simulated boot, remove
-and reinstall on both nodes; both agents now run from the kit as HASS. Still to do:
-the boot lines and a real reboot of a node, the broker and HA (the user's, D9), then
-the exit review and, when the user says so, the release.
+and reinstall on both nodes; both agents run from the kit as HASS, without a break
+since 26 October (checked 3 November: neither node has rebooted since its boot lines
+went in). On 3 November the user chose to release 0.1.0 as an early test before the
+reboot test: the README and release notes say the boot start is not yet seen. Still to
+do: a real reboot of a node, the broker and HA (the user's, D9), then the exit review.
 
 ## The kits
 
