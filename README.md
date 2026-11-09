@@ -6,7 +6,7 @@
 
 [![Release](https://img.shields.io/github/v/release/issinoho/vms-hass?label=release)](https://github.com/issinoho/vms-hass/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/issinoho/vms-hass/total?label=downloads)](https://github.com/issinoho/vms-hass/releases)
-![OpenVMS](https://img.shields.io/badge/OpenVMS-IA64%20%7C%20x86--64-blue)
+![OpenVMS](https://img.shields.io/badge/OpenVMS-Alpha%20%7C%20IA64%20%7C%20x86--64-blue)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 OpenVMS systems in [Home Assistant](https://www.home-assistant.io). A native agent on
@@ -15,7 +15,7 @@ discovery turns each node into a **device** with typed sensors: no YAML to write
 sensors keep history and long-term statistics, go on dashboards, and drive alerts and
 automations next to everything else Home Assistant watches.
 
-It is written for OpenVMS from scratch in C99: VSI C on x86-64 and Integrity (IA64),
+It is written for OpenVMS from scratch in C99: VSI C on x86-64, Integrity (IA64) and Alpha,
 VSI's OpenSSL 3 kit for TLS. The agent connects out to the broker, so nothing listens
 on the VMS system, and it runs as an unprivileged account of its own. It is
 **read-only**: Home Assistant cannot act on the node.
@@ -24,9 +24,10 @@ Part of the same family as [vmsotel](https://github.com/issinoho/vmsotel),
 [the beszel agent](https://github.com/issinoho/vms-beszel), [VTOP](https://github.com/issinoho/vms-vtop)
 and the other [ports and tools for OpenVMS](https://openvms.issinoho.com).
 
-**Status: 0.1.0, an early test release.** It runs on both test nodes (x86-64 E9.2-4
-and IA64 V8.4-2L3), installed from the kit and publishing to Home Assistant, without a
-break since 26 October 2026. Not yet seen: a start at boot through a real reboot, and
+**Status: 0.1.1, an early test release.** It runs on three test nodes (x86-64 E9.2-4,
+IA64 V8.4-2L3 and Alpha V8.4-2L2), installed from the kit and publishing to Home
+Assistant: x86-64 and IA64 without a break since 26 October 2026, Alpha since
+9 November 2026. Not yet seen: a start at boot through a real reboot, and
 TLS against a real broker (tested on Linux only). See [docs/PLAN.md](docs/PLAN.md) and
 [docs/PHASE4.md](docs/PHASE4.md).
 
@@ -71,7 +72,7 @@ Assistant uses (for example the Mosquitto app and the MQTT integration). A kit
 downloaded through a non-VMS system loses its record format. As SYSTEM, restore it and
 install:
 
-    $ SET FILE/ATTRIBUTE=(RFM:FIX,LRL:8192,MRS:8192,RAT:NONE) ISSINOHO-*-HASS-V0001-0-1.PCSI
+    $ SET FILE/ATTRIBUTE=(RFM:FIX,LRL:8192,MRS:8192,RAT:NONE) ISSINOHO-*-HASS-V0001-1-1.PCSI
     $ PRODUCT INSTALL HASS /PRODUCER=ISSINOHO /SOURCE=dev:[dir]
 
 Then:
