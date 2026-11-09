@@ -261,3 +261,16 @@ batch logs (AGENT_RUN.LOG on each node).
   With the user's OK it was deleted, and the HASS line added as
   `SYS$COMMON:[SYSMGR]SYSHUTDWN.COM;6` (`;5` is the backup); nothing is left in
   SYS$SPECIFIC.
+
+## 14. OpenVMS Alpha (2026-11-09, AXPBOX, V8.4-2L2, VSI C 7.4-002)
+
+- The agent builds with no warnings and passes all 314 native checks on Alpha.
+- **Memory read 100% used, 0 free** in HA on the first run. `SHOW MEMORY` showed
+  501,420 of 524,288 pages free. `$GETRMI` `RMI$_FRLIST` (and `RMI$_MODLIST`)
+  with an 8-byte buffer, as on IA64 and x86-64, returned 0 on Alpha (beszel's
+  NOTES already say `$GETRMI` wants exact item sizes). `rmi_u()` now retries an
+  8-byte item as 4 bytes when it fails or reads 0; a list that really is empty
+  reads 0 either way. With it, `--print` gives mem_used 4.3, mem_free 3915 MiB
+  (0.1.1).
+- The node ID is `axpbox_1028`, from the node name and SCSSYSTEMID (changed from
+  1025 to 1028 the evening before, so no older ID was ever published).
