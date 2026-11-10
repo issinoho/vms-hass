@@ -115,6 +115,18 @@ For the samplers' system-service pitfalls, see vms-beszel's docs/NOTES.md (D4).
         x86vms:dka0,dka200,dka300,ldm2585:eia0:sys_batch,x86vms_batch,lpd_ts7500i,tcpip_lpd_in,tcpip_lpd_in_x86vms_1,tcpip_smtp,tcpip_smtp_x86vms_1 \
         myi64:dka800:ewb0:sys_batch,sys_print,canon,tcpip_lpd_in,tcpip_lpd_in_myi64_1,tcpip_smtp,tcpip_smtp_myi64_1
 
+- **VAXVMS added (2026-11-10, asked for by the user):** its overview section, its
+  lines in the "All nodes" graphs and its own view were inserted with one
+  python_transform, leaving the other nodes' cards as they were. Its six
+  default-disabled sensors were enabled, as on the others. The generator's
+  four-node command, for the next full rerun:
+
+      tools/dashboard.py \
+        x86vms:dka0,dka200,dka300,ldm2585:eia0:sys_batch,x86vms_batch,lpd_ts7500i,tcpip_lpd_in,tcpip_lpd_in_x86vms_1,tcpip_smtp,tcpip_smtp_x86vms_1 \
+        myi64:dka800:ewb0:sys_batch,sys_print,canon,tcpip_lpd_in,tcpip_lpd_in_myi64_1,tcpip_smtp,tcpip_smtp_myi64_1 \
+        axpbox:dka0,dka400,dka500:ewa0:sys_batch,tcpip_smtp,tcpip_smtp_axpbox_1 \
+        vaxvms:dua1:xqa0:sys_batch
+
 ## 7. What Phase 3 has to work with (2026-10-25, probes/p3_survey*.com)
 
 - Both nodes are single-member clusters (SHOW CLUSTER lists only themselves).
