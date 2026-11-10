@@ -393,3 +393,16 @@ vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
 - **Boot path, emulated:** with the agent stopped and HASS$ROOT and HASS$USER
   deassigned, `@SYS$STARTUP:HASS$STARTUP` defined both and started the agent as
   HASS. Not yet tried: a real reboot (the pending-job path).
+
+## 18. The 0.1.2 release kits (2026-11-10)
+
+- `tools/kit.sh` built all four 0.1.2 kits after 327 native checks on each node.
+- `probes/upgrade_test.com` (batch) installed them over the running agent on x86,
+  IA64 (both still on 0.1.0) and Alpha (0.1.1): PCSI upgraded in place, the agent
+  restarted as HASS and reports 0.1.2, and the node IDs stayed `x86vms_1025`,
+  `myi64_1026`, `axpbox_1028`.
+- On the VAX, `probes/vax_reinstall.com`: PRODUCT REMOVE stopped the agent (one job
+  left, none running), deassigned HASS$ROOT and HASS$USER, and kept CONF (with the
+  password), DATA (node ID) and LOG; the reinstall and `HASS$STARTUP` brought it
+  back as HASS, 0.1.2, `vaxvms_1027`.
+- HA had fresh values from all four nodes afterwards, boot times unchanged.

@@ -6,7 +6,7 @@
 
 [![Release](https://img.shields.io/github/v/release/issinoho/vms-hass?label=release)](https://github.com/issinoho/vms-hass/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/issinoho/vms-hass/total?label=downloads)](https://github.com/issinoho/vms-hass/releases)
-![OpenVMS](https://img.shields.io/badge/OpenVMS-Alpha%20%7C%20IA64%20%7C%20x86--64-blue)
+![OpenVMS](https://img.shields.io/badge/OpenVMS-Alpha%20%7C%20IA64%20%7C%20x86--64%20%7C%20VAX-blue)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 OpenVMS systems in [Home Assistant](https://www.home-assistant.io). A native agent on
@@ -16,7 +16,7 @@ sensors keep history and long-term statistics, go on dashboards, and drive alert
 automations next to everything else Home Assistant watches.
 
 It is written for OpenVMS from scratch in C99: VSI C on x86-64, Integrity (IA64) and Alpha,
-VSI's OpenSSL 3 kit for TLS. The agent connects out to the broker, so nothing listens
+with VSI's OpenSSL 3 kit for TLS, and Compaq C on VAX. The agent connects out to the broker, so nothing listens
 on the VMS system, and it runs as an unprivileged account of its own. It is
 **read-only**: Home Assistant cannot act on the node.
 
@@ -24,12 +24,19 @@ Part of the same family as [vmsotel](https://github.com/issinoho/vmsotel),
 [the beszel agent](https://github.com/issinoho/vms-beszel), [VTOP](https://github.com/issinoho/vms-vtop)
 and the other [ports and tools for OpenVMS](https://openvms.issinoho.com).
 
-**Status: 0.1.1, an early test release.** It runs on three test nodes (x86-64 E9.2-4,
-IA64 V8.4-2L3 and Alpha V8.4-2L2), installed from the kit and publishing to Home
-Assistant: x86-64 and IA64 without a break since 26 October 2026, Alpha since
-9 November 2026. Not yet seen: a start at boot through a real reboot, and
-TLS against a real broker (tested on Linux only). See [docs/PLAN.md](docs/PLAN.md) and
+**Status: 0.1.2, an early test release.** It runs on four test nodes (x86-64 E9.2-4,
+IA64 V8.4-2L3, Alpha V8.4-2L2 and VAX V7.3), installed from the kit and publishing to
+Home Assistant: x86-64 and IA64 since 26 October 2026, Alpha since 9 November and VAX
+since 10 November 2026. Not yet seen: a start at boot through a real reboot, and TLS
+against a real broker (tested on Linux only). See [docs/PLAN.md](docs/PLAN.md) and
 [docs/PHASE4.md](docs/PHASE4.md).
+
+**On VAX** (OpenVMS V7.3, Compaq C 6.4, TCP/IP Services V5.1) there is no OpenSSL, so
+the agent speaks plain MQTT only, and V7.3 can't start a process as another account, so
+it runs as a batch job of its account on `SYS$BATCH` (which counts as one executing
+job there). `HASS$CONFIGURE` can't make the account's random password on VAX: create
+the account first (see `README.VMS`). Details in [docs/DECISIONS.md](docs/DECISIONS.md)
+D11.
 
 ## What it publishes
 
@@ -67,12 +74,12 @@ removed from the device as they do.
 
 ## Installing
 
-The kits need VSI TCP/IP Services, VSI's SSL3 kit, and an MQTT broker that Home
+The kits need TCP/IP Services, VSI's SSL3 kit (not on VAX), and an MQTT broker that Home
 Assistant uses (for example the Mosquitto app and the MQTT integration). A kit
 downloaded through a non-VMS system loses its record format. As SYSTEM, restore it and
 install:
 
-    $ SET FILE/ATTRIBUTE=(RFM:FIX,LRL:8192,MRS:8192,RAT:NONE) ISSINOHO-*-HASS-V0001-1-1.PCSI
+    $ SET FILE/ATTRIBUTE=(RFM:FIX,LRL:8192,MRS:8192,RAT:NONE) ISSINOHO-*-HASS-V0001-2-1.PCSI
     $ PRODUCT INSTALL HASS /PRODUCER=ISSINOHO /SOURCE=dev:[dir]
 
 Then:
@@ -97,11 +104,11 @@ identity and log.
 
 ## Building from source
 
-On OpenVMS, with VSI C and SSL3:
+On OpenVMS, with VSI C and SSL3 (on VAX, Compaq C and no SSL):
 
     $ @build_vms TEST               ! the agent, its launcher and the unit tests
 
-From Linux, `tools/kit.sh <node>` builds on a node, runs the tests there and makes the
+From Linux, `tools/kit.sh <node>` (over Telnet and FTP for the VAX) builds on a node, runs the tests there and makes the
 kit. On Linux itself, `make test` runs the same unit tests against a stub platform, and
 `make integration` runs the agent against a local Mosquitto.
 
