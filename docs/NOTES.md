@@ -274,3 +274,30 @@ batch logs (AGENT_RUN.LOG on each node).
   (0.1.1).
 - The node ID is `axpbox_1028`, from the node name and SCSSYSTEMID (changed from
   1025 to 1028 the evening before, so no older ID was ever published).
+
+## 15. OpenVMS VAX: what the compiler and system have (2026-11-10, probes/vax_cc.com)
+
+VAXVMS: VAXserver 3900 (SIMH), OpenVMS V7.3, Compaq C V6.4-005, Compaq TCP/IP
+Services V5.1, 64 MB. There is no SSH, so it is driven over Telnet and FTP with
+vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
+`probes/vax_cc.c` was compiled once per feature:
+
+- **No 64-bit integers at all:** `long long` and `__int64` give `%CC-E-NOLONGLONG`
+  ("64-bit integral types are not supported on this platform"), and there is no
+  `<stdint.h>` (`%CC-F-NOINCLFILEF`) nor `<inttypes.h>`. `long` and pointers are 4 bytes.
+- **`/STANDARD=C99` is refused** with `%CC-W-C99NAONVAX`; the compiler falls back to
+  "relaxed_ansi89", which still takes `//` comments, mixed declarations, `inline`,
+  designated initialisers (an informational), compound literals, `__VA_ARGS__`,
+  flexible array members, `restrict`, `__func__` and `<stdbool.h>`.
+- **No `snprintf` or `vsnprintf`** (implicit declaration, then undefined at link),
+  and no `isnan`.
+- **Floating point is VAX D_float** by default: no IEEE, `DBL_MAX` 1.7e38, a 56-bit
+  fraction, so a `double` holds every integer up to 2^56 exactly (`9007199254740993.0`
+  printed back unchanged). `/FLOAT=G_FLOAT` is accepted.
+- **BSD sockets work:** `<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`,
+  `select()` and `getaddrinfo` all compile and link with `/PREFIX=ALL`.
+- **`$GETRMI` and `<rmidef.h>` exist** (RMI$_MODES, RMI$_FRLIST, RMI$_MODLIST compile).
+- **No SSL:** no SSL3 (or any OpenSSL) kit, so only plain MQTT is possible (D10).
+- Accounts: SYSTEM and IAIN are fully privileged and nothing else can log in, so the
+  agent's account check (D9) refuses every existing account; `--print` skips it.
+- The only LAN device is XQA0 (DELQA, CSMA/CD).
