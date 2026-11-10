@@ -27,7 +27,8 @@ and the other [ports and tools for OpenVMS](https://openvms.issinoho.com).
 **Status: 0.1.2, an early test release.** It runs on four test nodes (x86-64 E9.2-4,
 IA64 V8.4-2L3, Alpha V8.4-2L2 and VAX V7.3), installed from the kit and publishing to
 Home Assistant: x86-64 and IA64 since 26 October 2026, Alpha since 9 November and VAX
-since 10 November 2026. Not yet seen: a start at boot through a real reboot, and TLS
+since 10 November 2026. A real reboot has started the agent by itself on VAX; not yet
+seen: the same on the other three, a clean stop through `SHUTDOWN.COM`, and TLS
 against a real broker (tested on Linux only). See [docs/PLAN.md](docs/PLAN.md) and
 [docs/PHASE4.md](docs/PHASE4.md).
 
