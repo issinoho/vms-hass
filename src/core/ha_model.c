@@ -4,6 +4,7 @@
  * and the sensor device classes and units in
  * https://developers.home-assistant.io/docs/core/entity/sensor/ (docs/MQTT.md).
  */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -22,7 +23,7 @@ static const char *const mode_name[7] = {
     "CPU supervisor", "CPU user", "CPU idle"
 };
 
-static uint64_t mode_at(const struct ha_cpu_modes *m, int i)
+static ha_u64 mode_at(const struct ha_cpu_modes *m, int i)
 {
     switch (i) {
     case 0: return m->interrupt;
@@ -36,15 +37,15 @@ static uint64_t mode_at(const struct ha_cpu_modes *m, int i)
 }
 
 void ha_model_figures(const struct ha_sample *prev, const struct ha_sample *cur,
-                      uint64_t dt_ms, struct ha_figures *f)
+                      ha_u64 dt_ms, struct ha_figures *f)
 {
-    uint64_t d[7], total = 0;
+    ha_u64 d[7], total = 0;
     int i, j;
     memset(f, 0, sizeof *f);
     if (!prev || dt_ms == 0)
         return;
     for (i = 0; i < 7; i++) {
-        uint64_t a = mode_at(&prev->cpu, i), b = mode_at(&cur->cpu, i);
+        ha_u64 a = mode_at(&prev->cpu, i), b = mode_at(&cur->cpu, i);
         if (b < a)
             return;                     /* a reset: wait for the next interval */
         d[i] = b - a;
@@ -70,8 +71,8 @@ void ha_model_figures(const struct ha_sample *prev, const struct ha_sample *cur,
     f->have_rates = 1;
 }
 
-void ha_track_update(struct ha_track *t, const struct ha_sample *s, uint64_t now,
-                     uint64_t hold_ms, struct ha_figures *f)
+void ha_track_update(struct ha_track *t, const struct ha_sample *s, ha_u64 now,
+                     ha_u64 hold_ms, struct ha_figures *f)
 {
     struct ha_track old = *t;
     int i, j;
@@ -81,7 +82,7 @@ void ha_track_update(struct ha_track *t, const struct ha_sample *s, uint64_t now
     for (i = 0; i < s->ndisk && i < HA_MAX_DISK; i++) {
         const struct ha_disk *d = &s->disk[i];
         int rose = 0;
-        uint64_t rose_at = 0;
+        ha_u64 rose_at = 0;
         for (j = 0; j < old.ndisk; j++) {
             if (strcmp(old.disk[j].name, d->name) != 0)
                 continue;
@@ -472,7 +473,7 @@ int ha_model_discovery(const struct ha_model_cfg *cfg, const struct ha_identity 
     return ha_json_ok(&j);
 }
 
-static double used_pct(uint64_t total, uint64_t free_)
+static double used_pct(ha_u64 total, ha_u64 free_)
 {
     if (!total)
         return 0;
@@ -668,15 +669,15 @@ int ha_node_id(char *out, size_t cap, const char *node, const char *system_id)
 }
 
 /* days since 1970-01-01 -> civil date (H. Hinnant's days_from_civil, inverted) */
-static void civil(int64_t z, int *y, unsigned *m, unsigned *d)
+static void civil(long z, int *y, unsigned *m, unsigned *d)
 {
-    int64_t era, yy;
+    long era, yy;
     unsigned doe, yoe, doy, mp;
     z += 719468;
     era = (z >= 0 ? z : z - 146096) / 146097;
     doe = (unsigned)(z - era * 146097);
     yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    yy = (int64_t)yoe + era * 400;
+    yy = (long)yoe + era * 400;
     doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     mp = (5 * doy + 2) / 153;
     *d = doy - (153 * mp + 2) / 5 + 1;
@@ -684,10 +685,15 @@ static void civil(int64_t z, int *y, unsigned *m, unsigned *d)
     *y = (int)(yy + (*m <= 2));
 }
 
-void ha_iso8601(char *out, size_t cap, int64_t t)
+void ha_iso8601(char *out, size_t cap, ha_i64 t)
 {
-    int64_t days = t >= 0 ? t / 86400 : -((-t + 86399) / 86400);
-    int64_t secs = t - days * 86400;
+    /* whole days, rounded down; 32 bits hold them for any date in reach */
+#ifdef HA_WIDE_DOUBLE
+    long days = (long)floor(t / 86400.0);
+#else
+    long days = (long)(t >= 0 ? t / 86400 : -((-t + 86399) / 86400));
+#endif
+    long secs = (long)(t - (ha_i64)days * 86400);
     int y;
     unsigned m, d;
     civil(days, &y, &m, &d);

@@ -1,9 +1,18 @@
 /* ha_json.c - a small streaming JSON writer (see ha_json.h). */
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "ha_json.h"
+
+/* the largest magnitude written as a number: VAX D_float stops at 1.7e38, where
+   1e300 cannot even be written (NOTES.md 15) */
+#if DBL_MAX_10_EXP >= 300
+#define NUM_LIMIT 1e300
+#else
+#define NUM_LIMIT DBL_MAX
+#endif
 
 void ha_json_init(ha_json *j, ha_buf *b)
 {
@@ -91,16 +100,20 @@ void ha_json_str(ha_json *j, const char *key, const char *v)
     ha_json_quote(j->b, v);
 }
 
-void ha_json_int(ha_json *j, const char *key, int64_t v)
+void ha_json_int(ha_json *j, const char *key, ha_i64 v)
 {
     lead(j, key);
+#ifdef HA_WIDE_DOUBLE
+    ha_buf_printf(j->b, "%.0f", v);
+#else
     ha_buf_printf(j->b, "%lld", (long long)v);
+#endif
 }
 
 void ha_json_num(ha_json *j, const char *key, double v, int decimals)
 {
     lead(j, key);
-    if (v != v || v > 1e300 || v < -1e300) {
+    if (v != v || v > NUM_LIMIT || v < -NUM_LIMIT) {
         ha_buf_puts(j->b, "null");
         return;
     }

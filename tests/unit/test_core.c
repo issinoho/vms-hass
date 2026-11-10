@@ -9,6 +9,7 @@
 
 #include "ha_agent.h"
 #include "ha_conf.h"
+#include "ha_fmt.h"
 #include "ha_json.h"
 #include "ha_model.h"
 #include "ha_mqtt.h"
@@ -36,6 +37,36 @@ static int bytes_eq(const ha_buf *b, const unsigned char *want, size_t n)
             return 0;
         }
     return 1;
+}
+
+/* ---- ha_snprintf: the VAX's snprintf (ha_port.h), checked on every platform ---- */
+
+static void test_fmt(void)
+{
+    char t[64];
+    CHECK(ha_snprintf(t, sizeof t, "%d|%5d|%-5d|%05d|%+d|% d", -42, 42, 42, -42, 7, 7) == 27);
+    CHECK_STR(t, "-42|   42|42   |-0042|+7| 7");
+    ha_snprintf(t, sizeof t, "%u %lu %ld %x %X %08X %o", 3000000000u, 4294967295UL, -2147483647L - 1,
+                255u, 255u, 0xBEEFu, 8u);
+    CHECK_STR(t, "3000000000 4294967295 -2147483648 ff FF 0000BEEF 10");
+    ha_snprintf(t, sizeof t, "%02d:%02u|%04d|%.3d|%.0d|", 5, 7u, 26, 7, 0);
+    CHECK_STR(t, "05:07|0026|007||");
+    ha_snprintf(t, sizeof t, "[%s][%-5s][%5s][%.2s][%.*s][%c%%]", "ab", "ab", "ab", "abc", 3, "abcdef", 'z');
+    CHECK_STR(t, "[ab][ab   ][   ab][ab][abc][z%]");
+    /* no ties and no negative zero: the VAX C library differs from IEEE ones there */
+    ha_snprintf(t, sizeof t, "%.*f %.1f %.0f %.2f %f", 2, 3.14159, -0.36, 2.4, 1e6, 0.5);
+    CHECK_STR(t, "3.14 -0.4 2 1000000.00 0.500000");
+    ha_snprintf(t, sizeof t, "%.0f", 4294967296.0 * 1000);   /* a ha_u64 on VAX */
+    CHECK_STR(t, "4294967296000");
+    /* truncation: C99's return value, always terminated, nothing past cap */
+    memset(t, 'x', sizeof t);
+    CHECK(ha_snprintf(t, 5, "%s-%d", "abcdef", 12) == 9);
+    CHECK_STR(t, "abcd");
+    CHECK(t[5] == 'x');
+    CHECK(ha_snprintf(t, 1, "%d", 123) == 3 && t[0] == 0);
+    CHECK(ha_snprintf(NULL, 0, "%s", "four") == 4);
+    ha_snprintf(t, sizeof t, "%zu %5.1f|%-6.2f|", (size_t)12, 3.14159, 2.5);
+    CHECK_STR(t, "12   3.1|2.50  |");
 }
 
 /* ---- MQTT encoding ---- */
@@ -229,9 +260,15 @@ static void test_json(void)
     ha_json_init(&j, &b);
     ha_json_obj(&j, NULL);
     ha_json_str(&j, "s", "a\"b\\c\nd\x01");
-    ha_json_num(&j, "n", 1.25, 1);
+    ha_json_num(&j, "n", 1.24, 1);         /* not a tie: VAX rounds those up (NOTES.md 16) */
     ha_json_num(&j, "z", -0.001, 1);
+#ifdef __VAX
+    /* VAX floats have no NaN: 0/0 is a floating fault (NOTES.md 16) */
+    (void)zero;
+    ha_json_null(&j, "nan");
+#else
     ha_json_num(&j, "nan", zero / zero, 1);
+#endif
     ha_json_int(&j, "i", -42);
     ha_json_arr(&j, "a");
     ha_json_bool(&j, NULL, 1);
@@ -282,7 +319,7 @@ static void test_iso8601(void)
     CHECK_STR(t, "2026-10-24T20:37:57+00:00");
     ha_iso8601(t, sizeof t, -1);
     CHECK_STR(t, "1969-12-31T23:59:59+00:00");
-    ha_iso8601(t, sizeof t, 4102444800LL);  /* 2100 is not a leap year */
+    ha_iso8601(t, sizeof t, (ha_i64)4102444800.0);  /* 2100 is not a leap year */
     CHECK_STR(t, "2100-01-01T00:00:00+00:00");
 }
 
@@ -294,19 +331,19 @@ static void base_sample(struct ha_sample *s)
     s->cpu.idle = 1000;
     s->cpu.user = 100;
     s->ncpu = 2;
-    s->mem_total = 1024ULL << 20;
-    s->mem_free = 256ULL << 20;
+    s->mem_total = (ha_u64)1024 * 1048576;
+    s->mem_free = (ha_u64)256 * 1048576;
     s->page_total = 0;                      /* no page file */
     s->swap_total = 100;
     s->swap_free = 25;
     s->boot_time = 0;
     s->ndisk = 2;
     strcpy(s->disk[0].name, "DKA0:");
-    s->disk[0].total = 4ULL << 30;
-    s->disk[0].free = 1ULL << 30;
+    s->disk[0].total = (ha_u64)4 * 1073741824;
+    s->disk[0].free = (ha_u64)1 * 1073741824;
     strcpy(s->disk[1].name, "$1$DGA100:");
-    s->disk[1].total = 2ULL << 30;
-    s->disk[1].free = 2ULL << 30;
+    s->disk[1].total = (ha_u64)2 * 1073741824;
+    s->disk[1].free = (ha_u64)2 * 1073741824;
     s->nnic = 1;
     strcpy(s->nic[0].name, "EWA0");
 }
@@ -426,7 +463,7 @@ static void test_phase3(void)
     struct ha_model_cfg cfg;
     struct ha_identity id;
     const struct ha_comp *c;
-    const uint64_t hold = 3600000;
+    const ha_u64 hold = 3600000;
     ha_buf out;
     ha_buf_init(&out);
 
@@ -641,7 +678,7 @@ static void drain(ha_buf *out, struct seen *s)
     ha_buf_clear(out);
 }
 
-static void feed(ha_sess *s, const unsigned char *p, size_t n, uint64_t now, int want)
+static void feed(ha_sess *s, const unsigned char *p, size_t n, ha_u64 now, int want)
 {
     CHECK(ha_sess_input(s, p, n, now) == want);
 }
@@ -759,7 +796,7 @@ static void test_agent(void)
     static const unsigned char ok[] = { 0x20, 2, 0, 0 };
     struct seen seen;
     int i, c, av, st, sub;
-    uint64_t t = 1000;
+    ha_u64 t = 1000;
 
     memset(&cfg, 0, sizeof cfg);
     cfg.model.discovery_prefix = "homeassistant";
@@ -944,6 +981,7 @@ static void test_conf(void)
 
 int main(void)
 {
+    test_fmt();
     test_remaining_length();
     test_connect();
     test_publish_subscribe();

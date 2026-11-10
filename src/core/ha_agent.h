@@ -10,7 +10,7 @@
 #ifndef HA_AGENT_H
 #define HA_AGENT_H
 
-#include <stdint.h>
+#include "ha_port.h"
 
 #include "ha_buf.h"
 #include "ha_model.h"
@@ -44,7 +44,7 @@ typedef struct ha_agent {
 
     struct ha_sample prev, cur;
     int nsamples;
-    uint64_t prev_at, cur_at, next_sample;
+    ha_u64 prev_at, cur_at, next_sample;
     struct ha_figures fig;
     struct ha_track track;
 
@@ -56,7 +56,7 @@ typedef struct ha_agent {
     int published_changed;              /* the caller should save the key list */
     int seen_online;                    /* sess.ha_online already handled */
     unsigned failures;                  /* connection attempts in a row that failed */
-    uint64_t up_since;
+    ha_u64 up_since;
     int was_up;
 
     ha_buf doc;
@@ -65,20 +65,20 @@ typedef struct ha_agent {
 
 /* the cfg strings must outlive the agent */
 void ha_agent_init(ha_agent *a, const struct ha_agent_cfg *cfg, const struct ha_identity *id,
-                   ha_log_fn log, void *log_ctx, uint64_t now);
+                   ha_log_fn log, void *log_ctx, ha_u64 now);
 void ha_agent_free(ha_agent *a);
 
-int ha_agent_begin(ha_agent *a, uint64_t now);
-int ha_agent_input(ha_agent *a, const void *p, size_t n, uint64_t now);
-int ha_agent_tick(ha_agent *a, uint64_t now);
-uint64_t ha_agent_wake_in(const ha_agent *a, uint64_t now);
+int ha_agent_begin(ha_agent *a, ha_u64 now);
+int ha_agent_input(ha_agent *a, const void *p, size_t n, ha_u64 now);
+int ha_agent_tick(ha_agent *a, ha_u64 now);
+ha_u64 ha_agent_wake_in(const ha_agent *a, ha_u64 now);
 
-int ha_agent_sample_due(const ha_agent *a, uint64_t now);
+int ha_agent_sample_due(const ha_agent *a, ha_u64 now);
 /* 1 if QUEUES (`list`) selects the queue `name` */
 int ha_agent_queue_wanted(const char *list, const char *name);
 
 /* a new sample; publishes the state (and discovery, if sensors changed) when up */
-int ha_agent_sample(ha_agent *a, const struct ha_sample *s, uint64_t now);
+int ha_agent_sample(ha_agent *a, const struct ha_sample *s, ha_u64 now);
 
 /* bytes waiting to be sent, and how many were */
 ha_buf *ha_agent_out(ha_agent *a);
@@ -86,15 +86,15 @@ void ha_agent_sent(ha_agent *a, size_t n);
 
 int ha_agent_up(const ha_agent *a);
 /* orderly stop: "offline", then DISCONNECT */
-void ha_agent_stop(ha_agent *a, uint64_t now);
+void ha_agent_stop(ha_agent *a, ha_u64 now);
 /* DISCONNECT without "offline" (after ha_agent_remove) */
 void ha_agent_end(ha_agent *a);
 /* remove the device from HA: empty retained config, availability and state */
-int ha_agent_remove(ha_agent *a, uint64_t now);
+int ha_agent_remove(ha_agent *a, ha_u64 now);
 /* 1 while QoS 1 messages are unacknowledged */
 int ha_agent_pending(const ha_agent *a);
 
-void ha_agent_closed(ha_agent *a, uint64_t now);
+void ha_agent_closed(ha_agent *a, ha_u64 now);
 /* the wait before the next attempt; rnd is any random number (jitter) */
 unsigned ha_agent_backoff_ms(const ha_agent *a, unsigned rnd);
 

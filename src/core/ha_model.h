@@ -9,7 +9,7 @@
 #ifndef HA_MODEL_H
 #define HA_MODEL_H
 
-#include <stdint.h>
+#include "ha_port.h"
 
 #include "ha_buf.h"
 #include "ha_sys.h"
@@ -75,7 +75,7 @@ struct ha_track {
         char name[HA_NAME];
         uint32_t errors;
         int rose;                       /* the count rose while we watched */
-        uint64_t rose_at;
+        ha_u64 rose_at;
     } disk[HA_MAX_DISK];
     int nshadow;
     struct {
@@ -96,14 +96,14 @@ struct ha_model_cfg {
 /* rates between two samples dt_ms apart; prev NULL or a counter reset leaves
    have_rates 0 */
 void ha_model_figures(const struct ha_sample *prev, const struct ha_sample *cur,
-                      uint64_t dt_ms, struct ha_figures *f);
+                      ha_u64 dt_ms, struct ha_figures *f);
 
 /* the problem and shadow-set figures for this sample; `t` starts zeroed.  A disk
    is a problem while it is in mount verification or offline, or for hold_ms after
    its error count rose.  A shadow set is degraded with a failed member or with
    fewer full members than it has had since the agent started. */
-void ha_track_update(struct ha_track *t, const struct ha_sample *s, uint64_t now,
-                     uint64_t hold_ms, struct ha_figures *f);
+void ha_track_update(struct ha_track *t, const struct ha_sample *s, ha_u64 now,
+                     ha_u64 hold_ms, struct ha_figures *f);
 
 /* a queue's state, one of ha_queue_states, and whether it is a problem */
 const char *ha_queue_state(unsigned status);
@@ -140,6 +140,6 @@ int ha_node_id(char *out, size_t cap, const char *node, const char *system_id);
 
 /* Unix seconds as "2026-10-23T15:48:29+00:00" (HA timestamp sensors want ISO 8601
    with an offset) */
-void ha_iso8601(char *out, size_t cap, int64_t t);
+void ha_iso8601(char *out, size_t cap, ha_i64 t);
 
 #endif

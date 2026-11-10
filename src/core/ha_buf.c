@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "ha_buf.h"
+#include "ha_port.h"
 
 void ha_buf_init(ha_buf *b)
 {

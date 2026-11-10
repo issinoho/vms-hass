@@ -5,6 +5,7 @@
 
 #include "ha_conf.h"
 #include "ha_text.h"
+#include "ha_port.h"
 
 /* docs/CONFIG.md; nothing else is accepted */
 static const char *const known[] = {

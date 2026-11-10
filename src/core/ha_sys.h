@@ -6,7 +6,7 @@
 #ifndef HA_SYS_H
 #define HA_SYS_H
 
-#include <stdint.h>
+#include "ha_port.h"
 
 #define HA_MAX_DISK 32
 #define HA_MAX_NIC 8
@@ -17,20 +17,20 @@
 /* cumulative CPU time in processor modes, summed over the active CPUs, in ticks
    of any fixed unit (RMI$_MODES on OpenVMS, 10 ms) */
 struct ha_cpu_modes {
-    uint64_t interrupt;
-    uint64_t mpsync;
-    uint64_t kernel;
-    uint64_t exec;
-    uint64_t super;
-    uint64_t user;
-    uint64_t idle;
+    ha_u64 interrupt;
+    ha_u64 mpsync;
+    ha_u64 kernel;
+    ha_u64 exec;
+    ha_u64 super;
+    ha_u64 user;
+    ha_u64 idle;
 };
 
 struct ha_disk {
     char name[HA_NAME];                 /* device name, e.g. "DKA0:" or "$1$DGA100:" */
     char label[HA_NAME];                /* volume label, "" if none */
-    uint64_t total;                     /* bytes */
-    uint64_t free;
+    ha_u64 total;                     /* bytes */
+    ha_u64 free;
     uint32_t errors;                    /* device error count (a shadow set: its members' too) */
     int mntver;                         /* mount verification in progress */
     int offline;                        /* the device (or a member) is not online */
@@ -75,21 +75,21 @@ struct ha_cluster {
 
 struct ha_nic {
     char name[HA_NAME];                 /* e.g. "EWA0" */
-    uint64_t rx;                        /* cumulative bytes received */
-    uint64_t tx;                        /* cumulative bytes sent */
+    ha_u64 rx;                        /* cumulative bytes received */
+    ha_u64 tx;                        /* cumulative bytes sent */
 };
 
 struct ha_sample {
     struct ha_cpu_modes cpu;
     int ncpu;                           /* active CPUs */
-    uint64_t mem_total;                 /* bytes */
-    uint64_t mem_free;                  /* free list */
-    uint64_t mem_modified;              /* modified list */
-    uint64_t page_total;                /* page files, bytes */
-    uint64_t page_free;
-    uint64_t swap_total;                /* swap files, bytes */
-    uint64_t swap_free;
-    int64_t boot_time;                  /* Unix time, seconds */
+    ha_u64 mem_total;                 /* bytes */
+    ha_u64 mem_free;                  /* free list */
+    ha_u64 mem_modified;              /* modified list */
+    ha_u64 page_total;                /* page files, bytes */
+    ha_u64 page_free;
+    ha_u64 swap_total;                /* swap files, bytes */
+    ha_u64 swap_free;
+    ha_i64 boot_time;                  /* Unix time, seconds */
     int processes;
     int interactive;                    /* interactive processes (users signed in) */
     double compute_queue;               /* processes waiting for a CPU */

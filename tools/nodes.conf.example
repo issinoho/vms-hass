@@ -6,3 +6,5 @@
 ia64    IA64    <ia64-host>   22    username  DISK$USER:[USERNAME.VMS_HASS]   vms_hass
 x86     X86_64  <x86-host>    22    username  DISK$USER:[USERNAME.VMS_HASS]   vms_hass
 alpha    ALPHA    <alpha-host>   22    username  DISK$USER:[USERNAME.VMS_HASS]   vms_hass
+# The VAX has no SSH: tools/vax.sh (Telnet/FTP) reads this row; port and the last column are unused.
+vax      VAX      <vax-host>     23    username  DISK$WORK:[WORK.VMS_HASS]       -

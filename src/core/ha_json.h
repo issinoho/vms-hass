@@ -7,7 +7,7 @@
 #ifndef HA_JSON_H
 #define HA_JSON_H
 
-#include <stdint.h>
+#include "ha_port.h"
 
 #include "ha_buf.h"
 
@@ -26,7 +26,7 @@ void ha_json_obj(ha_json *j, const char *key);      /* key NULL at the top or in
 void ha_json_arr(ha_json *j, const char *key);
 void ha_json_end(ha_json *j);                       /* closes the innermost object or array */
 void ha_json_str(ha_json *j, const char *key, const char *v);
-void ha_json_int(ha_json *j, const char *key, int64_t v);
+void ha_json_int(ha_json *j, const char *key, ha_i64 v);
 /* fixed decimals, trailing zeros kept: 12.30 with decimals 2 */
 void ha_json_num(ha_json *j, const char *key, double v, int decimals);
 void ha_json_bool(ha_json *j, const char *key, int v);

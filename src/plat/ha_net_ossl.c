@@ -10,6 +10,9 @@
  *
  * TLS always verifies the broker's certificate and host name, against the
  * platform's CA bundle (or the system store) plus MQTT_CA_FILE.
+ *
+ * With HA_NO_TLS (OpenVMS VAX, which has no OpenSSL: NOTES.md 15, D11) it is
+ * plain TCP only, and asking for TLS is an error.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -24,41 +27,56 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
+#include "ha_platform.h"
+#include "ha_text.h"
+
+#ifndef HA_NO_TLS
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
+#endif
 
-#include "ha_platform.h"
-#include "ha_text.h"
+/* TCP/IP Services for VAX V5.1 has no socklen_t (NOTES.md 16) */
+#ifdef __VAX
+typedef unsigned int ha_socklen;
+#else
+typedef socklen_t ha_socklen;
+#endif
 
 struct ha_sock {
     int fd;
+#ifndef HA_NO_TLS
     SSL *ssl;
+#endif
 };
 
+#define SEND_DEADLINE_MS 30000
+
+#ifndef HA_NO_TLS
 /* One TLS context for the life of the process: loading the CA bundle took
    about 7 s of CPU on the x86 node (NOTES.md 34), and it would otherwise be
    repeated on every reconnect.  Verification still happens per connection. */
 static SSL_CTX *tls_ctx;
 static char tls_ctx_ca[1024];
-
-#define SEND_DEADLINE_MS 30000
+#endif
 
 /* wait until fd is readable (or writable) or the deadline passes: 1 ready, 0 not */
-static int wait_io(int fd, int want_write, uint64_t deadline)
+static int wait_io(int fd, int want_write, ha_u64 deadline)
 {
     for (;;) {
         fd_set fs;
         struct timeval tv;
-        uint64_t now = ha_plat_now_ms();
+        ha_u64 now = ha_plat_now_ms();
         int rc;
+        unsigned long left;
         if (now >= deadline)
             return 0;
+        left = HA_TO_ULONG(deadline - now);
         FD_ZERO(&fs);
         FD_SET(fd, &fs);
-        tv.tv_sec = (long)((deadline - now) / 1000);
-        tv.tv_usec = (long)((deadline - now) % 1000) * 1000;
+        tv.tv_sec = (long)(left / 1000);
+        tv.tv_usec = (long)(left % 1000) * 1000;
         rc = select(fd + 1, want_write ? NULL : &fs, want_write ? &fs : NULL, NULL, &tv);
         if (rc > 0)
             return 1;
@@ -67,6 +85,7 @@ static int wait_io(int fd, int want_write, uint64_t deadline)
     }
 }
 
+#ifndef HA_NO_TLS
 static void ossl_err(char *err, size_t errlen, const char *what)
 {
     unsigned long e = ERR_get_error();
@@ -79,6 +98,7 @@ static void ossl_err(char *err, size_t errlen, const char *what)
     }
     ERR_clear_error();
 }
+#endif
 
 /* "IPv4 192.0.2.10" / "IPv6 2001:db8::1": errors name the address that failed
    (NOTES.md 40: a socket() error at 03:04 didn't say which one) */
@@ -94,7 +114,7 @@ static int connect_timeout(const struct addrinfo *ai, unsigned timeout_ms, char 
 {
     char an[80];
     int fd, fl, rc, so = 0;
-    socklen_t sl = sizeof so;
+    ha_socklen sl = sizeof so;
     fd_set w;
     struct timeval tv;
     addr_name(ai, an, sizeof an);
@@ -135,6 +155,7 @@ static int connect_timeout(const struct addrinfo *ai, unsigned timeout_ms, char 
     return fd;                              /* still non-blocking: see the top */
 }
 
+#ifndef HA_NO_TLS
 static int is_ip_literal(const char *host)
 {
     unsigned char a[16];
@@ -182,7 +203,7 @@ static SSL_CTX *tls_context(const char *ca_file, char *err, size_t errlen)
 static int tls_start(ha_sock *s, const char *host, const char *ca_file, unsigned timeout_ms,
                      char *err, size_t errlen)
 {
-    uint64_t deadline = ha_plat_now_ms() + timeout_ms;
+    ha_u64 deadline = ha_plat_now_ms() + timeout_ms;
     int r;
     SSL_CTX *ctx = tls_context(ca_file, err, errlen);
     if (!ctx)
@@ -233,6 +254,7 @@ static int tls_start(ha_sock *s, const char *host, const char *ca_file, unsigned
     }
     return 1;
 }
+#endif
 
 ha_sock *ha_net_open(const char *host, const char *port, int tls, const char *ca_file,
                      unsigned timeout_ms, char *err, size_t errlen)
@@ -247,6 +269,12 @@ ha_sock *ha_net_open(const char *host, const char *port, int tls, const char *ca
        and socket() refuses the SCTP ones with EPROTOTYPE: that error, from the
        last entry tried, hid the real one when the broker was down (NOTES.md 45) */
     hints.ai_protocol = IPPROTO_TCP;
+#ifdef HA_NO_TLS
+    if (tls) {
+        snprintf(err, errlen, "TLS is not available on this system: set MQTT_TLS=0");
+        return NULL;
+    }
+#endif
     rc = getaddrinfo(host, port, &hints, &res);
     if (rc != 0) {
         snprintf(err, errlen, "lookup of %s failed: %s", host, gai_strerror(rc));
@@ -266,10 +294,14 @@ ha_sock *ha_net_open(const char *host, const char *port, int tls, const char *ca
         free(s);
         return NULL;
     }
+#ifndef HA_NO_TLS
     if (tls && !tls_start(s, host, ca_file, timeout_ms, err, errlen)) {
         ha_net_close(s);
         return NULL;
     }
+#else
+    (void)ca_file;
+#endif
     return s;
 }
 
@@ -277,10 +309,11 @@ int ha_net_send(ha_sock *s, const void *p, size_t n)
 {
     /* all of it within SEND_DEADLINE_MS, or fail (and the caller closes) */
     const char *c = p;
-    uint64_t deadline = ha_plat_now_ms() + SEND_DEADLINE_MS;
+    ha_u64 deadline = ha_plat_now_ms() + SEND_DEADLINE_MS;
     while (n) {
         long w;
         int want_write = 1;
+#ifndef HA_NO_TLS
         if (s->ssl) {
             int r = SSL_write(s->ssl, c, n > 65536 ? 65536 : (int)n);
             if (r > 0) {
@@ -294,7 +327,9 @@ int ha_net_send(ha_sock *s, const void *p, size_t n)
                 want_write = e == SSL_ERROR_WANT_WRITE;
                 w = 0;
             }
-        } else {
+        } else
+#endif
+        {
             w = (long)send(s->fd, c, n, 0);
             if (w < 0 && errno == EINTR)
                 continue;
@@ -316,6 +351,7 @@ int ha_net_send(ha_sock *s, const void *p, size_t n)
 
 long ha_net_recv(ha_sock *s, void *p, size_t cap)
 {
+#ifndef HA_NO_TLS
     if (s->ssl) {
         int r = SSL_read(s->ssl, p, cap > 65536 ? 65536 : (int)cap);
         if (r > 0)
@@ -330,7 +366,9 @@ long ha_net_recv(ha_sock *s, void *p, size_t cap)
             ERR_clear_error();
             return -1;
         }
-    } else {
+    } else
+#endif
+    {
         long r;
         do
             r = (long)recv(s->fd, p, cap, 0);
@@ -346,8 +384,10 @@ int ha_net_wait(ha_sock *s, unsigned timeout_ms)
     fd_set rd;
     struct timeval tv;
     int rc;
+#ifndef HA_NO_TLS
     if (s->ssl && SSL_pending(s->ssl) > 0)
         return 1;
+#endif
     FD_ZERO(&rd);
     FD_SET(s->fd, &rd);
     tv.tv_sec = (long)(timeout_ms / 1000);
@@ -362,10 +402,12 @@ void ha_net_close(ha_sock *s)
 {
     if (!s)
         return;
+#ifndef HA_NO_TLS
     if (s->ssl) {
         SSL_shutdown(s->ssl);
         SSL_free(s->ssl);
     }
+#endif
     if (s->fd >= 0)
         close(s->fd);
     free(s);
@@ -373,5 +415,12 @@ void ha_net_close(ha_sock *s)
 
 int ha_net_random(void *p, size_t n)
 {
+#ifdef HA_NO_TLS
+    /* no cryptographic generator: refuse rather than give a guessable secret */
+    (void)p;
+    (void)n;
+    return 0;
+#else
     return RAND_bytes(p, (int)n) == 1;
+#endif
 }

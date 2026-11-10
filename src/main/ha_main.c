@@ -172,7 +172,7 @@ static int print_mode(const struct ha_agent_cfg *cfg, const struct ha_identity *
     static struct ha_track track;
     struct ha_figures f;
     ha_buf b;
-    uint64_t t0;
+    ha_u64 t0;
     int i, k;
     ha_plat_sample(&s1);
     t0 = ha_plat_now_ms();
@@ -183,7 +183,7 @@ static int print_mode(const struct ha_agent_cfg *cfg, const struct ha_identity *
             s2.queue[k++] = s2.queue[i];
     s2.nqueue = k;
     ha_model_figures(&s1, &s2, ha_plat_now_ms() - t0, &f);
-    ha_track_update(&track, &s2, ha_plat_now_ms(), (uint64_t)cfg->error_hold_s * 1000, &f);
+    ha_track_update(&track, &s2, ha_plat_now_ms(), (ha_u64)cfg->error_hold_s * 1000, &f);
     ha_model_components(&s2, &set);
     ha_buf_init(&b);
     if (!ha_model_discovery(&cfg->model, id, &set, NULL, &b))
@@ -212,7 +212,7 @@ int main(int argc, char **argv)
     long keepalive, interval, portn, hold;
     int remove_mode = 0, print_only = 0, tls, argi = 1, rc = 0;
     ha_sock *sock = NULL;
-    uint64_t retry_at = 0, remove_deadline = 0;
+    ha_u64 retry_at = 0, remove_deadline = 0;
 
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
         printf("hass_agent %s\n", HA_VERSION);
@@ -379,7 +379,7 @@ int main(int argc, char **argv)
             *user ? "the broker password" : "the broker connection");
 
     while (!ha_plat_stop_requested()) {
-        uint64_t now = ha_plat_now_ms(), wait;
+        ha_u64 now = ha_plat_now_ms(), wait;
         if (!remove_mode && ha_plat_exists(stop_path)) {
             /* left in place: HASS$RUN.COM sees it too, and doesn't restart us */
             say(HA_LOG_INFO, "stop requested (%s)", stop_path);
@@ -398,8 +398,8 @@ int main(int argc, char **argv)
                 sock = NULL;
                 ha_agent_closed(&agent, now);
                 retry_at = now + ha_agent_backoff_ms(&agent, ha_plat_random());
-                say(HA_LOG_INFO, "retrying in %llu s",
-                    (unsigned long long)((retry_at - now + 500) / 1000));
+                say(HA_LOG_INFO, "retrying in %lu s",
+                    HA_TO_ULONG((retry_at - now + 500) / 1000));
                 if (remove_mode) {
                     rc = EXIT_FAILURE;
                     break;
@@ -462,8 +462,8 @@ drop:
                 break;
             }
             retry_at = now + ha_agent_backoff_ms(&agent, ha_plat_random());
-            say(HA_LOG_INFO, "reconnecting in %llu s",
-                (unsigned long long)((retry_at - now + 500) / 1000));
+            say(HA_LOG_INFO, "reconnecting in %lu s",
+                HA_TO_ULONG((retry_at - now + 500) / 1000));
         } else {
             wait = ha_agent_wake_in(&agent, now);
             if (retry_at > now && retry_at - now < wait)

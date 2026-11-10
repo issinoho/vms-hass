@@ -182,3 +182,39 @@ the user gives the Mosquitto app a certificate.
 
 Alternative: refuse plain MQTT except to loopback. Rejected for now: it would need the
 certificate before anything could run.
+
+## D11. OpenVMS VAX: 64-bit values as double, plain MQTT, its own tooling
+
+**Status:** chosen by the user (2026-11-10): double on VAX, a HASS account on the
+VAX as on the other nodes, and a hand run into HA first (kit and boot later).
+
+Compaq C 6.4 for VAX has no 64-bit integer type, no `<stdint.h>`, no `snprintf`
+and no C99 mode, and the VAX has no OpenSSL (NOTES.md 15). So:
+
+- **The core names `ha_u64`/`ha_i64` (`src/core/ha_port.h`), never `uint64_t`.**
+  They are the C99 types everywhere except under `HA_WIDE_DOUBLE` (VAX), where they
+  are `double`. VAX D_float has a 56-bit fraction, so millisecond clocks (about
+  5e12), byte and tick counts stay exact. Only +, -, * and comparisons are used on
+  them: the compiler rejects %, shifts and masks on a double, and the few integer
+  divisions (the ISO 8601 date, log seconds) are written for both.
+  `make test` runs the unit tests a third time with `HA_WIDE_DOUBLE` and
+  `HA_NO_SNPRINTF` on Linux, and fails if a core file names a 64-bit type.
+- **`ha_snprintf`** (`ha_fmt.c`, in the core on every platform, tested against
+  fixed strings) stands in for `snprintf`/`vsnprintf` under `HA_NO_SNPRINTF`.
+- **Quadwords in the VMS platform layer are `struct quad`** (two longwords), turned
+  into `ha_u64` in one place, so the same file builds on all four architectures.
+- **Plain MQTT only on VAX** (`HA_NO_TLS`): D10's warning applies, and MQTT_TLS=1 is
+  refused with a clear error. `--random` fails there rather than give a guessable
+  password; the VAX account's password is made on the workstation instead.
+- **Tooling:** the VAX has no SSH, so `tools/vax.sh` (on vms-site-config's
+  `vax.py`, Telnet/FTP) replaces vms.sh and push.sh for it, as in vms-zlib and
+  vms-bzip2.
+- **Items OpenVMS V7.3 VAX lacks** are left out under `#ifdef`, not guessed: the
+  shadow-set member counts are counted on the walk, and copy progress is unknown
+  (NOTES.md 16). The LAN counter codes come from `$NMADEF` in the node's `LIB.MLB`,
+  as there is no `SYS$LIB_C.TLB`.
+
+Alternatives: 32-bit values with wrap-safe arithmetic on VAX (more changes to the
+core's behaviour, harder to test against the other platforms); a two-longword
+struct with helper functions everywhere (exact, but touches every arithmetic site on
+all platforms and makes the core harder to read).

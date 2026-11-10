@@ -64,7 +64,7 @@ int main(int argc, char **argv)
 
     for (it = 0; it < iters; it++) {
         size_t n = 0, k;
-        uint64_t now = (uint64_t)it * 100;
+        ha_u64 now = (ha_u64)it * 100;
         int pieces = 1 + (int)(rnd() % 6), p;
         if (!ha_agent_up(&a))
             ha_agent_begin(&a, now);

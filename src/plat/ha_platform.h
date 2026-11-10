@@ -9,13 +9,13 @@
 #define HA_PLATFORM_H
 
 #include <stddef.h>
-#include <stdint.h>
+#include "ha_port.h"
 
 #include "ha_buf.h"
 #include "ha_sys.h"
 
 /* ---- time ---- */
-uint64_t ha_plat_now_ms(void);          /* monotonic */
+ha_u64 ha_plat_now_ms(void);          /* monotonic */
 void ha_plat_sleep_ms(unsigned ms);
 unsigned ha_plat_random(void);          /* for backoff jitter: not for secrets */
 

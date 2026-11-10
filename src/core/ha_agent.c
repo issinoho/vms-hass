@@ -19,7 +19,7 @@ static void say(ha_agent *a, int level, const char *fmt, ...)
 }
 
 void ha_agent_init(ha_agent *a, const struct ha_agent_cfg *cfg, const struct ha_identity *id,
-                   ha_log_fn log, void *log_ctx, uint64_t now)
+                   ha_log_fn log, void *log_ctx, ha_u64 now)
 {
     memset(a, 0, sizeof *a);
     a->cfg = *cfg;
@@ -62,7 +62,7 @@ void ha_agent_sent(ha_agent *a, size_t n)
     ha_sess_sent(&a->sess, n);
 }
 
-static int publish_discovery(ha_agent *a, uint64_t now)
+static int publish_discovery(ha_agent *a, ha_u64 now)
 {
     const struct ha_comp_set *rem = NULL;
     if (a->have_published) {
@@ -85,7 +85,7 @@ static int publish_discovery(ha_agent *a, uint64_t now)
     return 1;
 }
 
-static int publish_state(ha_agent *a, uint64_t now)
+static int publish_state(ha_agent *a, ha_u64 now)
 {
     if (a->nsamples == 0)
         return 1;
@@ -99,7 +99,7 @@ static int publish_state(ha_agent *a, uint64_t now)
 }
 
 /* everything HA needs, after a CONNACK or HA's own restart */
-static int announce(ha_agent *a, uint64_t now)
+static int announce(ha_agent *a, ha_u64 now)
 {
     if (a->nsamples == 0)
         return 1;                       /* discovery needs the disks and NICs */
@@ -108,7 +108,7 @@ static int announce(ha_agent *a, uint64_t now)
            publish_state(a, now);
 }
 
-static int after_input(ha_agent *a, uint64_t now)
+static int after_input(ha_agent *a, ha_u64 now)
 {
     if (a->sess.just_up) {
         a->sess.just_up = 0;
@@ -129,32 +129,32 @@ static int after_input(ha_agent *a, uint64_t now)
     return 1;
 }
 
-int ha_agent_begin(ha_agent *a, uint64_t now)
+int ha_agent_begin(ha_agent *a, ha_u64 now)
 {
     a->was_up = 0;
     return ha_sess_begin(&a->sess, &a->cfg.sess, now);
 }
 
-int ha_agent_input(ha_agent *a, const void *p, size_t n, uint64_t now)
+int ha_agent_input(ha_agent *a, const void *p, size_t n, ha_u64 now)
 {
     if (!ha_sess_input(&a->sess, p, n, now))
         return 0;
     return after_input(a, now);
 }
 
-int ha_agent_tick(ha_agent *a, uint64_t now)
+int ha_agent_tick(ha_agent *a, ha_u64 now)
 {
     return ha_sess_tick(&a->sess, now);
 }
 
-uint64_t ha_agent_wake_in(const ha_agent *a, uint64_t now)
+ha_u64 ha_agent_wake_in(const ha_agent *a, ha_u64 now)
 {
-    uint64_t w = ha_sess_wake_in(&a->sess, now);
-    uint64_t s = a->next_sample > now ? a->next_sample - now : 0;
+    ha_u64 w = ha_sess_wake_in(&a->sess, now);
+    ha_u64 s = a->next_sample > now ? a->next_sample - now : 0;
     return s < w ? s : w;
 }
 
-int ha_agent_sample_due(const ha_agent *a, uint64_t now)
+int ha_agent_sample_due(const ha_agent *a, ha_u64 now)
 {
     return now >= a->next_sample;
 }
@@ -202,7 +202,7 @@ int ha_agent_queue_wanted(const char *list, const char *name)
     return 0;                           /* "NONE" matches no queue name a node allows */
 }
 
-int ha_agent_sample(ha_agent *a, const struct ha_sample *s, uint64_t now)
+int ha_agent_sample(ha_agent *a, const struct ha_sample *s, ha_u64 now)
 {
     struct ha_comp_set *next = &a->removed;     /* scratch until discovery */
     int i, k;
@@ -219,9 +219,9 @@ int ha_agent_sample(ha_agent *a, const struct ha_sample *s, uint64_t now)
     a->nsamples++;
     ha_model_figures(a->nsamples > 1 ? &a->prev : NULL, &a->cur,
                      a->nsamples > 1 ? now - a->prev_at : 0, &a->fig);
-    ha_track_update(&a->track, &a->cur, now, (uint64_t)a->cfg.error_hold_s * 1000, &a->fig);
+    ha_track_update(&a->track, &a->cur, now, (ha_u64)a->cfg.error_hold_s * 1000, &a->fig);
     a->next_sample = now + (a->nsamples == 1 ? HA_FIRST_INTERVAL_MS
-                                            : (uint64_t)a->cfg.interval_s * 1000);
+                                            : (ha_u64)a->cfg.interval_s * 1000);
     ha_model_components(&a->cur, next);
     if (!ha_model_same(next, &a->comps)) {
         a->comps = *next;
@@ -238,7 +238,7 @@ int ha_agent_sample(ha_agent *a, const struct ha_sample *s, uint64_t now)
     return publish_state(a, now);
 }
 
-void ha_agent_stop(ha_agent *a, uint64_t now)
+void ha_agent_stop(ha_agent *a, ha_u64 now)
 {
     if (ha_agent_up(a))
         ha_sess_publish(&a->sess, a->t_avail, "offline", 7, 0, 1, now);
@@ -250,7 +250,7 @@ void ha_agent_end(ha_agent *a)
     ha_sess_end(&a->sess);
 }
 
-int ha_agent_remove(ha_agent *a, uint64_t now)
+int ha_agent_remove(ha_agent *a, ha_u64 now)
 {
     /* an empty retained message deletes the retained one (MQTT 3.3.1.3), and an
        empty config removes the device from HA (docs/MQTT.md) */
@@ -259,7 +259,7 @@ int ha_agent_remove(ha_agent *a, uint64_t now)
            ha_sess_publish(&a->sess, a->t_avail, "", 0, 1, 1, now);
 }
 
-void ha_agent_closed(ha_agent *a, uint64_t now)
+void ha_agent_closed(ha_agent *a, ha_u64 now)
 {
     if (a->sess.err[0])
         say(a, HA_LOG_WARN, "connection closed: %s", a->sess.err);

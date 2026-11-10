@@ -34,19 +34,19 @@ static unsigned new_id(ha_sess *s)
     return s->next_id;
 }
 
-static uint64_t keepalive_ms(const ha_sess *s)
+static ha_u64 keepalive_ms(const ha_sess *s)
 {
-    return (uint64_t)s->cfg.keepalive_s * 1000;
+    return (ha_u64)s->cfg.keepalive_s * 1000;
 }
 
 /* how long a QoS 1 PUBLISH or a SUBSCRIBE may wait for its answer */
-static uint64_t ack_ms(const ha_sess *s)
+static ha_u64 ack_ms(const ha_sess *s)
 {
-    uint64_t k = keepalive_ms(s);
+    ha_u64 k = keepalive_ms(s);
     return k > 30000 ? k : 30000;
 }
 
-int ha_sess_begin(ha_sess *s, const struct ha_sess_cfg *cfg, uint64_t now)
+int ha_sess_begin(ha_sess *s, const struct ha_sess_cfg *cfg, ha_u64 now)
 {
     struct ha_mqtt_connect c;
     if (s->out.p)
@@ -98,7 +98,7 @@ static int acked(ha_sess *s, unsigned id)
     return 0;                           /* a stray ack: harmless */
 }
 
-static int on_packet(ha_sess *s, const struct ha_mqtt_packet *pkt, uint64_t now)
+static int on_packet(ha_sess *s, const struct ha_mqtt_packet *pkt, ha_u64 now)
 {
     (void)now;
     if (s->state == HA_SESS_CONNECTING) {
@@ -153,7 +153,7 @@ static int on_packet(ha_sess *s, const struct ha_mqtt_packet *pkt, uint64_t now)
     }
 }
 
-int ha_sess_input(ha_sess *s, const void *p, size_t n, uint64_t now)
+int ha_sess_input(ha_sess *s, const void *p, size_t n, ha_u64 now)
 {
     struct ha_mqtt_packet pkt;
     int r;
@@ -169,7 +169,7 @@ int ha_sess_input(ha_sess *s, const void *p, size_t n, uint64_t now)
     return 1;
 }
 
-int ha_sess_tick(ha_sess *s, uint64_t now)
+int ha_sess_tick(ha_sess *s, ha_u64 now)
 {
     int i;
     if (s->state == HA_SESS_DOWN)
@@ -197,9 +197,9 @@ int ha_sess_tick(ha_sess *s, uint64_t now)
     return 1;
 }
 
-uint64_t ha_sess_wake_in(const ha_sess *s, uint64_t now)
+ha_u64 ha_sess_wake_in(const ha_sess *s, ha_u64 now)
 {
-    uint64_t best = 60000, t;
+    ha_u64 best = 60000, t;
     int i;
 #define SOONER(deadline) do { t = (deadline) > now ? (deadline) - now : 0; if (t < best) best = t; } while (0)
     if (s->state == HA_SESS_CONNECTING) {
@@ -221,7 +221,7 @@ uint64_t ha_sess_wake_in(const ha_sess *s, uint64_t now)
 }
 
 int ha_sess_publish(ha_sess *s, const char *topic, const void *payload, size_t n,
-                    int qos, int retain, uint64_t now)
+                    int qos, int retain, ha_u64 now)
 {
     unsigned id = 0;
     if (s->state != HA_SESS_UP)
@@ -244,7 +244,7 @@ int ha_sess_publish(ha_sess *s, const char *topic, const void *payload, size_t n
     return 1;
 }
 
-int ha_sess_subscribe(ha_sess *s, const char *topic, int qos, uint64_t now)
+int ha_sess_subscribe(ha_sess *s, const char *topic, int qos, ha_u64 now)
 {
     unsigned id;
     if (s->state != HA_SESS_UP)

@@ -301,3 +301,41 @@ vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
 - Accounts: SYSTEM and IAIN are fully privileged and nothing else can log in, so the
   agent's account check (D9) refuses every existing account; `--print` skips it.
 - The only LAN device is XQA0 (DELQA, CSMA/CD).
+
+## 16. The agent on OpenVMS VAX (2026-11-10, D11)
+
+- **What V7.3 VAX lacks, from its own headers** (`probes/vax_hdr.com`): no
+  `SYS$LIB_C.TLB`; no DVI$_SHDW_MBR_COUNT, DVI$_SHDW_DEVICE_COUNT,
+  DVI$_SHDW_MBR_COPY_DONE or DVI$_SHDW_MBR_MERGE_DONE (the other shadow items and
+  every SYI$, RMI$, QUI$ and JPI$ item the agent uses are there); no prototype for
+  `sys$getrmi` (an implicit declaration, `%CC-I-IMPLICITFUNC`); no `socklen_t`.
+- **NMA counter codes:** `$NMADEF` in the node's `SYS$LIBRARY:LIB.MLB`
+  (`probes/vax_nma.com`) gives NMA$C_CTLIN_BRC 1000, NMA$C_CTLIN_BSN 1001,
+  NMA$M_CNT_TYP 4095, NMA$M_CNT_MAP 4096, NMA$M_CNT_WID 24576. That module has no
+  confidentiality or copyright line (searched), unlike SYS$LIB_C.TLB (beszel NOTES 18).
+  `LANCP SHOW DEVICE XQA0/COUNTERS` has the same "Bytes received"/"Bytes sent" lines
+  the 64-bit fallback reads.
+- **`_SOCKADDR_LEN` breaks the link on VAX:** it maps getaddrinfo, freeaddrinfo,
+  gai_strerror and getnameinfo to `__BSD44_*` names the VAX C library doesn't have
+  (`%LINK-W-NUDFSYMS`). Without it they link; the agent never reads `sa_len`.
+- **The VAX C library differs in `%f`:** `%.0f` of 2.5 gives 3 (round half away from
+  zero), and there is no negative zero (`%.1f` of -0.04 gives 0.0). And `0.0/0.0`
+  at run time is `%SYSTEM-F-FLTDIV_F`, not a NaN: VAX floats have no NaN or infinity.
+  The unit tests avoid ties and skip the NaN case on VAX.
+- **Build and tests:** `build_vms.com` builds with no warnings on Compaq C 6.4, and
+  all 327 unit checks pass on the VAX.
+- **`--print` agrees with DCL** (with only NETMBX and TMPMBX): memory 64 MiB, 25.9%
+  used (SHOW MEMORY: 33,868 of 131,072 pages in use); DUA1 1.06 GiB free (2,233,296
+  blocks); page and swap files unused; 2 users; SYS$BATCH idle. With a DCL loop
+  running, CPU supervisor 93.4-93.8%, executive 5.8-6.4%, interrupt 0.1-0.2%;
+  MONITOR MODES over the same 14 s averaged 93.21, 6.07 and 0.21
+  (`probes/vax_cpu.com`). The node ID is `vaxvms_1027`; 30 sensors.
+- **`MONITOR ... /RECORD=NL:` fails on V7.3** (`-PLI-F-ENDFILE`); use
+  `/SUMMARY=file` without /RECORD.
+- **`HASS_LAUNCH` cannot start a process as another account on V7.3 VAX.** The
+  persona is created and assumed, but the LOGINOUT process `$CREPRC` makes logs in
+  as the caller (SYSTEM); the agent saw group 1 and refused, as D9 intends.
+  `PRC$M_INHERIT_PERSONA` is in VAX's PRCDEF, but `$CREPRC` refuses it
+  (`%SYSTEM-F-IVSTSFLG`).
+- The discovery message is longer than one record in a VMS log file: `--print`
+  output splits it at 8,190 characters (only the log; MQTT gets it whole).
