@@ -339,3 +339,18 @@ vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
   (`%SYSTEM-F-IVSTSFLG`).
 - The discovery message is longer than one record in a VMS log file: `--print`
   output splits it at 8,190 characters (only the log; MQTT gets it whole).
+- **`getaddrinfo()` is a stub on TCP/IP Services V5.1 for VAX:** it returns 11 for
+  every name and every hint combination, numeric addresses and localhost included,
+  and `gai_strerror(11)` is NULL (`probes/vax_gai.c`); the agent logged "lookup of
+  ... failed: (null)". `gethostbyname()` works, so the VAX build resolves with it
+  (and `inet_addr`), IPv4 only. `netdb.h` defines getaddrinfo and friends as
+  macros there, so they are `#undef`ed first.
+- **The agent runs as a batch job of HASS on VAX** (D11, chosen by the user): HASS
+  has the BATCH login class there, and `HASS$CONTROL START` submits `HASS$RUN` to
+  SYS$BATCH with `/USER=HASS`; `HASS$RUN` names its process HASS_AGENT. HASS$RUN's
+  log showed "as HASS with TMPMBX,NETMBX". The job counts as SYS$BATCH's executing
+  job (its queue sensors show 1 executing, state available).
+- **Live in HA (2026-11-10 20:23 UTC):** device VAXVMS (`vaxvms_1027`), 24 enabled
+  entities plus the 6 disabled by default, figures as `--print` gave. `HASS$CONTROL
+  STOP` made HA show the sensors unavailable at once (20:25:04); START brought them
+  back within 30 s, the boot time unchanged.

@@ -8,6 +8,7 @@ before starting work. Work phase by phase; stop and ask at each phase exit.
 ## Ground rules (from the sibling vms-* repos)
 
 - **Use `tools/vms.sh`** for remote work; never raw `ssh host cmd`, never `WAIT` over ssh.
+  The VAX has no SSH: use `tools/vax.sh` (Telnet/FTP, D11) for it.
   Run long jobs with `run_in_background`, and probes that might hang as batch jobs.
 - **Committed files must not contain real node, broker or HA details** (they live in
   the git-ignored `tools/nodes.conf` and `tools/ha.conf`), nor credentials, tokens or

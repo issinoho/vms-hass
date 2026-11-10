@@ -100,13 +100,56 @@ static void ossl_err(char *err, size_t errlen, const char *what)
 }
 #endif
 
+#ifdef __VAX
+/* TCP/IP Services V5.1 for VAX: getaddrinfo() fails for every name, numeric ones
+   and localhost too (11, and gai_strerror() gives NULL), while gethostbyname()
+   works (probes/vax_gai.c, NOTES.md 16).  IPv4 only, as V5.1 is. */
+static struct sockaddr_in vax_sin;
+static struct addrinfo vax_ai;
+
+static int vax_lookup(const char *host, const char *port, struct addrinfo **res)
+{
+    unsigned int a = (unsigned int)inet_addr(host);
+    memset(&vax_sin, 0, sizeof vax_sin);
+    vax_sin.sin_family = AF_INET;
+    vax_sin.sin_port = htons((unsigned short)atoi(port));
+    if (a != 0xFFFFFFFFu) {
+        memcpy(&vax_sin.sin_addr, &a, 4);
+    } else {
+        struct hostent *he = gethostbyname(host);
+        if (!he || he->h_addrtype != AF_INET || he->h_length != 4)
+            return 1;
+        memcpy(&vax_sin.sin_addr, he->h_addr, 4);
+    }
+    memset(&vax_ai, 0, sizeof vax_ai);
+    vax_ai.ai_family = AF_INET;
+    vax_ai.ai_socktype = SOCK_STREAM;
+    vax_ai.ai_protocol = IPPROTO_TCP;
+    vax_ai.ai_addr = (struct sockaddr *)&vax_sin;
+    vax_ai.ai_addrlen = sizeof vax_sin;
+    *res = &vax_ai;
+    return 0;
+}
+/* netdb.h has these as macros (to the C library's names) */
+#undef getaddrinfo
+#undef freeaddrinfo
+#undef gai_strerror
+#define getaddrinfo(host, port, hints, res) vax_lookup(host, port, res)
+#define freeaddrinfo(r) ((void)(r))
+#define gai_strerror(rc) "no such host"
+#endif
+
 /* "IPv4 192.0.2.10" / "IPv6 2001:db8::1": errors name the address that failed
    (NOTES.md 40: a socket() error at 03:04 didn't say which one) */
 static void addr_name(const struct addrinfo *ai, char *out, size_t cap)
 {
     char host[64];
+#ifdef __VAX
+    snprintf(host, sizeof host, "%s", inet_ntoa(((const struct sockaddr_in *)ai->ai_addr)->sin_addr));
+#else
     if (getnameinfo(ai->ai_addr, ai->ai_addrlen, host, sizeof host, NULL, 0, NI_NUMERICHOST) != 0)
         snprintf(host, sizeof host, "?");
+#endif
     snprintf(out, cap, "%s %s", ai->ai_family == AF_INET6 ? "IPv6" : ai->ai_family == AF_INET ? "IPv4" : "address", host);
 }
 

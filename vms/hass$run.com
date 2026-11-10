@@ -10,6 +10,9 @@ $! defined, so a tree anywhere works without a system logical name.
 $ set noon
 $ say = "write sys$output"
 $ set process/privileges=(noall,netmbx,tmpmbx)  ! all the agent ever needs (D9)
+$! as a batch job (OpenVMS VAX, D11) the process is BATCH_n: give it the name
+$! HASS$CONTROL looks for
+$ if f$mode() .eqs. "BATCH" then set process/name=HASS_AGENT
 $! HASS$ROOT from the system table only (not job or group tables: vms-beszel
 $! security review L3), else from this procedure's location; pinned in the process table
 $ root = f$trnlnm("HASS$ROOT", "LNM$SYSTEM_TABLE", , "EXECUTIVE")

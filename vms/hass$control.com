@@ -74,15 +74,31 @@ $   run/detached sys$system:loginout.exe /authorize/process_name='name' -
         /output='physroot'.LOG]HASS_AGENT.LOG -
         /error='physroot'.LOG]HASS_AGENT.LOG
 $ else
+$!  OpenVMS VAX V7.3 can't create a process under another persona (NOTES.md 16):
+$!  there the agent runs as a batch job of the account, which logs in as it
+$!  (D11; the account has the BATCH login class on VAX only).  HASS$RUN names
+$!  its process HASS_AGENT.
+$   if f$getsyi("ARCH_NAME") .eqs. "VAX"
+$   then
+$     submit/user='user'/queue=SYS$BATCH/name='name'/noprinter/keep -
+          /log_file='physroot'.LOG]HASS_AGENT.LOG 'physroot'.COM]HASS$RUN.COM
+$     goto started
+$   endif
 $!  As another account: RUN/DETACHED/UIC would keep our username and our
 $!  authorized privileges (vms-beszel NOTES.md 36), so the launcher takes on the
 $!  account's persona and creates the process under it (D9).
 $   launch := $'physroot'.BIN]HASS_LAUNCH.EXE
 $   launch 'user' 'physroot'.COM]HASS$RUN.COM 'physroot'.LOG]HASS_AGENT.LOG 'name'
 $ endif
+$started:
 $ if .not. $status then exit $status
+$! a batch job can take a few seconds to log in
+$ n = 0
+$start_wait:
 $ wait 0:0:2
 $ gosub find_pid
+$ n = n + 1
+$ if pid .eqs. "" .and. n .lt. 10 then goto start_wait
 $ if pid .eqs. ""
 $ then
 $   say "HASS$CONTROL: the agent did not start; see HASS$ROOT:[LOG]HASS_AGENT.LOG"

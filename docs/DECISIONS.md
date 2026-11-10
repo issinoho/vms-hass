@@ -186,7 +186,8 @@ certificate before anything could run.
 ## D11. OpenVMS VAX: 64-bit values as double, plain MQTT, its own tooling
 
 **Status:** chosen by the user (2026-11-10): double on VAX, a HASS account on the
-VAX as on the other nodes, and a hand run into HA first (kit and boot later).
+VAX as on the other nodes (with batch logins: see below), and a hand run into HA
+first (kit and boot later).
 
 Compaq C 6.4 for VAX has no 64-bit integer type, no `<stdint.h>`, no `snprintf`
 and no C99 mode, and the VAX has no OpenSSL (NOTES.md 15). So:
@@ -213,6 +214,15 @@ and no C99 mode, and the VAX has no OpenSSL (NOTES.md 15). So:
   shadow-set member counts are counted on the walk, and copy progress is unknown
   (NOTES.md 16). The LAN counter codes come from `$NMADEF` in the node's `LIB.MLB`,
   as there is no `SYS$LIB_C.TLB`.
+
+- **On VAX the agent runs as a batch job of its account** (chosen by the user
+  2026-11-10). V7.3 VAX's `$CREPRC` doesn't create a process under an assumed
+  persona and refuses `PRC$M_INHERIT_PERSONA` (NOTES.md 16), so `HASS_LAUNCH`
+  can't work there. A batch job logs in as the account properly (its UIC, quotas
+  and authorized privileges), so the VAX account alone gets the BATCH login class,
+  and `HASS$CONTROL START` uses `SUBMIT/USER` (which needs CMKRNL). The password
+  stays random, unknown and locked, and the privileges NETMBX and TMPMBX only.
+  D9 is otherwise unchanged; other architectures keep every login class off.
 
 Alternatives: 32-bit values with wrap-safe arithmetic on VAX (more changes to the
 core's behaviour, harder to test against the other platforms); a two-longword
