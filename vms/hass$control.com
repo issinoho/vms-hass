@@ -82,7 +82,13 @@ $   if f$getsyi("ARCH_NAME") .eqs. "VAX"
 $   then
 $     submit/user='user'/queue=SYS$BATCH/name='name'/noprinter/keep -
           /log_file='physroot'.LOG]HASS_AGENT.LOG 'physroot'.COM]HASS$RUN.COM
-$     goto started
+$     if .not. $status then exit $status
+$     entry = $entry
+$!    at boot SYS$BATCH starts after the site products (it is started last), so
+$!    the job waits for it: that is a start, not a failure
+$     if .not. f$getqui("DISPLAY_QUEUE", "QUEUE_STOPPED", "SYS$BATCH") then goto started
+$     say "HASS_AGENT submitted (entry ''entry'): it runs when SYS$BATCH starts"
+$     exit 1
 $   endif
 $!  As another account: RUN/DETACHED/UIC would keep our username and our
 $!  authorized privileges (vms-beszel NOTES.md 36), so the launcher takes on the

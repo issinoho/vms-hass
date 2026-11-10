@@ -15,7 +15,7 @@ pcsiversion=$(sed -n 's/^#define HA_PCSI_VERSION *"\(.*\)"/\1/p' "$top/src/core/
 [ -n "$version" ] && [ -n "$pcsiversion" ] || { echo "kit: no version in ha_version.h" >&2; exit 1; }
 read -r _ ARCH _ _ _ _ _ < <(awk -v n="$node" '$1==n' "$top/tools/nodes.conf")
 case ${ARCH^^} in X86*) base=X86VMS; archname=x86-64 ;; ALPHA*|AXP*) base=AXPVMS; archname=Alpha ;;
-    IA64*|I64*) base=I64VMS; archname=Integrity ;; *) echo "kit: unknown architecture '$ARCH' in tools/nodes.conf" >&2; exit 1 ;; esac
+    IA64*|I64*) base=I64VMS; archname=Integrity ;; VAX) base=VMS; archname=VAX ;; *) echo "kit: unknown architecture '$ARCH' in tools/nodes.conf" >&2; exit 1 ;; esac
 # One kit at a time: every build shares out/kitstage.
 mkdir -p "$top/out"; exec 9> "$top/out/.kit.lock"
 flock -n 9 || { echo "kit: another kit.sh is running (out/kitstage is shared)" >&2; exit 1; }
@@ -25,13 +25,41 @@ stage=$top/out/kitstage
 rm -rf "$stage"; mkdir -p "$stage" "$top/out/kits"
 subst() { sed -e "s/@PRODUCER@/$KIT_PRODUCER/g" -e "s/@BASE@/$base/g" \
               -e "s/@PCSIVERSION@/$pcsiversion/g" -e "s/@VERSION@/$version/g" -e "s/@ARCH@/$archname/g"; }
-subst < "$top/kit/hass.pcsi\$desc_template" > "$stage/PRODUCT-$base.PCSI\$DESC"
+subst < "$top/kit/hass.pcsi\$desc_template" |
+    if [ "$base" = VMS ]; then grep -v -- '-- @SSL3@'; else sed 's/ -- @SSL3@$//'; fi \
+    > "$stage/PRODUCT-$base.PCSI\$DESC"
 subst < "$top/kit/hass.pcsi\$text_template" > "$stage/PRODUCT-$base.PCSI\$TEXT"
 subst < "$top/kit/readme.vms" > "$stage/README.VMS"
 printf 'KIT_PRODUCER=%s\nKIT_PRODUCT=%s\nPCSI_VERSION=%s\nKIT_VERSION=%s\n' \
     "$KIT_PRODUCER" "$KIT_PRODUCT" "$pcsiversion" "$version" > "$stage/KIT.ENV"
 
 echo "kit: vms-hass agent $version ($KIT_PRODUCER $base $KIT_PRODUCT $pcsiversion) on $node"
+if [ "$base" = VMS ]; then
+    # the VAX has no SSH: the same steps over Telnet/FTP (tools/vax.sh, D11)
+    v=$top/tools/vax.sh
+    "$v" push > /dev/null
+    "$v" dcl 'create/directory [.kit]' 'create/directory [.vms]' > /dev/null
+    "$v" put "$top/LICENSE" LICENSE.
+    for f in agent.conf_template 'hass$control.com' 'hass$run.com'; do "$v" put "$top/vms/$f" "vms/$f"; done
+    for f in "$stage"/* "$top/kit/make_kit.com" "$top/kit/hass\$configure.com" \
+             "$top/kit/hass\$startup.com" "$top/kit/hass\$shutdown.com"; do
+        "$v" put "$f" "kit/$(basename "$f")"
+    done
+    printf '$ @build_vms TEST\n' > "$stage/b.com"
+    VAX_TIMEOUT=1800 "$v" run "$stage/b.com" > "$top/out/kit-build-$node.log" 2>&1 || true
+    grep -q '0 failed' "$top/out/kit-build-$node.log" && grep -q 'BUILD-OK' "$top/out/kit-build-$node.log" ||
+        { tail -20 "$top/out/kit-build-$node.log"; echo "kit: build or native tests failed" >&2; exit 1; }
+    grep -E 'checks' "$top/out/kit-build-$node.log" || true
+    printf '$ @[.kit]make_kit\n' > "$stage/k.com"
+    VAX_TIMEOUT=1800 "$v" run "$stage/k.com" 2>&1 | tee "$top/out/kit-$node.log" || true
+    kit=$(sed -n 's/^MAKE_KIT: kit .*\]\([^;]*\);.*/\1/p' "$top/out/kit-$node.log" | head -1)
+    [ -n "$kit" ] || { echo "kit: no kit produced (see out/kit-$node.log)" >&2; exit 1; }
+    rm -f "$top/out/kits/$kit"
+    "$v" get "KIT_VAX/$kit" "$top/out/kits/$kit" --binary
+    [ -s "$top/out/kits/$kit" ] || { echo "kit: couldn't fetch $kit from $node" >&2; exit 1; }
+    (cd "$top/out/kits" && sha256sum ISSINOHO-*-HASS-*.PCSI > SHA256SUMS && cat SHA256SUMS)
+    exit 0
+fi
 "$top/tools/push.sh" "$node" > /dev/null
 "$top/tools/vms.sh" "$node" put "$top/LICENSE" > /dev/null 2>&1 || true
 "$top/tools/vms.sh" "$node" put "$top/vms/agent.conf_template" "$top/vms/hass\$control.com" \

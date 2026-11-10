@@ -22,7 +22,7 @@ $!  - SYS$MANAGER:HASS$CONFIG.COM (the account; start at boot or not), and the
 $!    system logical name HASS$USER.
 $!
 $ set noon
-$ set process/parse_style=extended
+$ if f$getsyi("ARCH_NAME") .nes. "VAX" then set process/parse_style=extended   ! no ODS-5 on VAX
 $ say = "write sys$output"
 $ interactive = f$mode() .eqs. "INTERACTIVE"
 $ if f$trnlnm("HASS$ROOT", "LNM$SYSTEM_TABLE") .eqs. ""
@@ -48,6 +48,11 @@ $ if account .eqs. "" .and. interactive then inquire account "The agent's accoun
 $ account = f$edit(account, "UPCASE,TRIM")
 $ if account .eqs. "" then account = accdef
 $ maxsys = f$getsyi("MAXSYSGROUP")
+$! On VAX the agent runs as a batch job of the account (D11): V7.3 can't start a
+$! process under another persona, so the account keeps its BATCH logins there
+$ vax = f$getsyi("ARCH_NAME") .eqs. "VAX"
+$ nobatch = "/nobatch"
+$ if vax then nobatch = "/batch"
 $ uicnum = f$identifier(account, "NAME_TO_NUMBER")
 $!
 $ ! a work file for AUTHORIZE: in [CONF], which only SYSTEM and the account can read
@@ -82,10 +87,14 @@ $   say "  account isn't changed."
 $   exit 44
 $ endif
 $ say "Account ''account' exists (", f$fao("!%U", uicnum), "); setting its privileges and logins again"
+$ datadev = f$parse("HASS$ROOT:[DATA]",,,"DEVICE","NO_CONCEAL")
+$ datadir = f$parse("HASS$ROOT:[DATA]",,,"DIRECTORY","NO_CONCEAL") - "][" - "><"
 $ open/write f 'work'
 $ write f "modify ''account' /privileges=(netmbx,tmpmbx) /defprivileges=(netmbx,tmpmbx) -"
 $ write f "  /flags=(nodisuser,disctly,lockpwd,norestricted) /lgicmd=""NL:"" -"
-$ write f "  /nolocal /nodialup /noremote /nonetwork /nobatch"
+$ write f "  /nolocal /nodialup /noremote /nonetwork ''nobatch' -"
+$ ! its login directory is the installed [DATA], wherever it was before
+$ write f "  /device=''datadev' /directory=''datadir'"
 $ write f "exit"
 $ close f
 $ goto run_authorize
@@ -127,6 +136,13 @@ $   say "  choose a group of the agent's own (D9)"
 $   exit 44
 $ endif
 $ delete/nolog 'work';*
+$ if vax
+$ then
+$   say "HASS$CONFIGURE: on VAX there is no OpenSSL to make the account's random password"
+$   say "  (D11). Create ''account' ''uic' with a random password made elsewhere, owner"
+$   say "  ""vms-hass agent"", then run this procedure again: it will set the rest."
+$   exit 44
+$ endif
 $ ! a password nobody needs: 32 random characters from OpenSSL's generator
 $ agent := $HASS$ROOT:[BIN]HASS_AGENT.EXE
 $ define/user sys$output 'work'
@@ -147,7 +163,7 @@ $ open/write f 'work'
 $ write f "add ''account' /uic=''uic' /password=''password' /owner=""vms-hass agent"" -"
 $ write f "  /privileges=(netmbx,tmpmbx) /defprivileges=(netmbx,tmpmbx) -"
 $ write f "  /flags=(nodisuser,disctly,lockpwd) /lgicmd=""NL:"" /pwdlifetime=none -"
-$ write f "  /nolocal /nodialup /noremote /nonetwork /nobatch -"
+$ write f "  /nolocal /nodialup /noremote /nonetwork ''nobatch' -"
 $ write f "  /device=''datadev' /directory=''datadir'"
 $ write f "exit"
 $ close f

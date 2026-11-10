@@ -6,7 +6,7 @@ $! description, text module, KIT.ENV, and README.VMS were put in
 $! [.KIT] by tools/kit.sh.  Writes the kit to [.KIT_<arch>].
 $!
 $ set noon
-$ set process/parse_style=extended
+$ if f$getsyi("ARCH_NAME") .nes. "VAX" then set process/parse_style=extended   ! no ODS-5 on VAX
 $ status = 44
 $ saved_default = f$environment("DEFAULT")
 $ proc = f$environment("PROCEDURE")
@@ -16,6 +16,7 @@ $ arch = f$edit(f$getsyi("ARCH_NAME"), "UPCASE")
 $ base = "I64VMS"
 $ if arch .eqs. "X86_64" then base = "X86VMS"
 $ if arch .eqs. "ALPHA" then base = "AXPVMS"
+$ if arch .eqs. "VAX" then base = "VMS"
 $!
 $! KIT_PRODUCER, KIT_PRODUCT, PCSI_VERSION, KIT_VERSION from KIT.ENV
 $ open/read env [.KIT]KIT.ENV
@@ -63,6 +64,7 @@ $ copy/nolog []LICENSE. 'mat'LICENSE.
 $ matspec = f$parse(mat,,,"DEVICE","NO_CONCEAL") + f$parse(mat,,,"DIRECTORY","NO_CONCEAL")
 $!
 $ write sys$output "MAKE_KIT: ''KIT_PRODUCER' ''base' ''KIT_PRODUCT' ''PCSI_VERSION' (vms-hass agent ''KIT_VERSION')"
+$ if arch .eqs. "VAX" then goto package_vax
 $ product package 'KIT_PRODUCT' -
     /producer='KIT_PRODUCER' /base_system='base' /version='PCSI_VERSION' -
     /source=[.KIT]PRODUCT-'base'.PCSI$DESC -
@@ -71,6 +73,17 @@ $ product package 'KIT_PRODUCT' -
     /format=sequential -
     /options=noconfirm /log
 $ status = $status
+$ goto packaged
+$! PCSI on OpenVMS VAX V7.3 has no /OPTIONS qualifier (D11; as vms-zlib's kit)
+$package_vax:
+$ product package 'KIT_PRODUCT' -
+    /producer='KIT_PRODUCER' /base_system='base' /version='PCSI_VERSION' -
+    /source=[.KIT]PRODUCT-'base'.PCSI$DESC -
+    /material='matspec' -
+    /destination='out' -
+    /format=sequential /log
+$ status = $status
+$packaged:
 $ kit = f$search("''out'*.PCSI")
 $ if kit .nes. "" then write sys$output "MAKE_KIT: kit ", kit
 $ if kit .eqs. "" then status = 44

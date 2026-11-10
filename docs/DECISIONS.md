@@ -223,6 +223,10 @@ and no C99 mode, and the VAX has no OpenSSL (NOTES.md 15). So:
   and `HASS$CONTROL START` uses `SUBMIT/USER` (which needs CMKRNL). The password
   stays random, unknown and locked, and the privileges NETMBX and TMPMBX only.
   D9 is otherwise unchanged; other architectures keep every login class off.
+- **The VAX kit** is base system `VMS`, without the SSL3 dependency; it is 0.1.2,
+  as the 0.1.1 kits don't have the VAX changes. `HASS$CONFIGURE` won't create a
+  new account on VAX (no generator for its password): it changes an existing one
+  it made, as on this node.
 
 Alternatives: 32-bit values with wrap-safe arithmetic on VAX (more changes to the
 core's behaviour, harder to test against the other platforms); a two-longword

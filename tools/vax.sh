@@ -8,7 +8,7 @@
 #   vax.sh dcl '<cmd>' ...             run DCL lines in the work directory
 #   vax.sh run <local.com> [params]    run a procedure in the work directory
 #   vax.sh put <local> [remote-rel]    upload one file (relative to the work directory)
-#   vax.sh get <remote-rel> [local]    download one file
+#   vax.sh get <remote-rel> [local] [--binary]   download one file
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 vaxpy=${VAX_PY:-$root/../vms-site-config/tools/vax.py}
@@ -47,7 +47,9 @@ run)
 put)
     python3 "$vaxpy" put "$1" "$(remote "${2:-$(basename "$1")}")" ;;
 get)
-    python3 "$vaxpy" get "$(remote "$1")" "${2:-$(basename "$1")}" ;;
+    bin=()
+    for a in "$@"; do [ "$a" = --binary ] && bin=(--binary); done
+    python3 "$vaxpy" get "$(remote "$1")" "${2:-$(basename "$1")}" "${bin[@]}" ;;
 *)
     echo "vax.sh: unknown operation $op" >&2; exit 2 ;;
 esac

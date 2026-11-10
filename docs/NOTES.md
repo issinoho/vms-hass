@@ -366,3 +366,30 @@ vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
   entities plus the 6 disabled by default, figures as `--print` gave. `HASS$CONTROL
   STOP` made HA show the sensors unavailable at once (20:25:04); START brought them
   back within 30 s, the boot time unchanged.
+
+## 17. The VAX kit and boot (2026-11-10, asked for by the user)
+
+- **Kit:** `tools/kit.sh vax` builds `ISSINOHO-VMS-HASS-V0001-2-1.PCSI` (0.1.2), base
+  system `VMS` as vms-zlib's VAX kit, with no SSL3 dependency (D11). PCSI on V7.3
+  VAX has no `/OPTIONS`: PACKAGE asks nothing, and INSTALL's questions are answered
+  from the procedure (`probes/vax_install.com`, as vms-zlib's installcheck).
+  `SET PROCESS/PARSE_STYLE=EXTENDED` is `%DCL-W-IVKEYW` there (no ODS-5); kit
+  procedures skip it on VAX.
+- **Install:** to `SYS$COMMON:[HASS]` (`HASS$ROOT` = `VAXVMS$DUA1:[SYS0.SYSCOMMON.HASS.]`).
+  The hand-run tree's AGENT.CONF, MQTT.PWD, NODE_ID and PUBLISHED were carried over,
+  then the hand-run tree was deleted (the password copy erased). HA kept the same
+  device and its 30 entities, none new.
+- **`HASS$CONFIGURE` on the existing account** keeps BATCH on VAX, and now also
+  sets the account's login directory to the installed `[DATA]`: it had been left
+  at the hand-run tree. It cannot make a new account on VAX (no OpenSSL for the
+  password: it says so and stops). `SET FILE/OWNER` on the running batch job's
+  open log gives `%SET-E-READERR`, harmlessly.
+- **Boot files** (`probes/boot_lines.com 4`): `st_4` in
+  `SYS$COMMON:[SYSMGR]SYSTARTUP_VMS.COM;6`, `HASS$SHUTDOWN` at the end of
+  `SYSHUTDWN.COM;2` (no EXIT before it); the previous versions are the backups,
+  and nothing is in SYS$SPECIFIC. Mirrored in vms-site-config.
+- At boot `st_4` runs before `ENABLE AUTOSTART /QUEUES`, so the job is submitted
+  to a stopped SYS$BATCH; `HASS$CONTROL` reports that as submitted, not failed.
+- **Boot path, emulated:** with the agent stopped and HASS$ROOT and HASS$USER
+  deassigned, `@SYS$STARTUP:HASS$STARTUP` defined both and started the agent as
+  HASS. Not yet tried: a real reboot (the pending-job path).

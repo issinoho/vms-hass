@@ -6,7 +6,8 @@ product @PRODUCER@ @BASE@ HASS @PCSIVERSION@ full ;
 
     -- The agent links VSI's OpenSSL 3.0 shared images (SSL3$LIBSSL_SHR32,
     -- SSL3$LIBCRYPTO_SHR32) for TLS to the broker and for random numbers.
-    software VSI @BASE@ SSL3 ;
+    -- (kit.sh drops the line for VAX, which has no OpenSSL: D11.)
+    software VSI @BASE@ SSL3 ; -- @SSL3@
 
     information RELEASE_NOTES phase after ;
 
