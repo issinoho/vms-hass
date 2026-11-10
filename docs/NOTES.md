@@ -406,3 +406,18 @@ vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
   password), DATA (node ID) and LOG; the reinstall and `HASS$STARTUP` brought it
   back as HASS, 0.1.2, `vaxvms_1027`.
 - HA had fresh values from all four nodes afterwards, boot times unchanged.
+
+## 19. A real reboot of the VAX (2026-11-10 21:48 UTC, done by the user)
+
+- **Boot: seen working.** The VAX came up at 21:48:54 (uptime 0 00:02:39 at
+  21:51:23). `st_4` defined HASS$ROOT and HASS$USER and submitted the agent's job
+  to SYS$BATCH before `ENABLE AUTOSTART /QUEUES`; it ran as HASS when the queue
+  started (log 21:49:08: connected, discovery of 30 sensors). HA had the new boot
+  time from 21:48:52 (its clock) and fresh values from 21:48:56.
+- **Shutdown: not exercised.** The reboot was a restart of the simulator, not
+  SHUTDOWN.COM: `OPERATOR.LOG;14` has no shutdown messages, and the old agent's log
+  ends with `%JBC-F-QUERESET, job aborted during execution because queue was reset`
+  (written when the queue manager came back) and no "stop requested". HA marked the
+  node unavailable at 21:47:54, a second after its last reading: the broker's last
+  will, as the simulator's sockets closed (as NOTES 3 saw with kill -9).
+- The job left no duplicate: one HASS_AGENT entry, executing.
