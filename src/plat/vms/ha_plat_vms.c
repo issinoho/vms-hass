@@ -778,9 +778,28 @@ static unsigned queue_status(unsigned int v)
     return st;
 }
 
+/* A status's message text, "%JBC-E-JOBQUEDIS, system job queue manager is not
+   running", or its number if $GETMSG does not know it. */
+static const char *status_text(unsigned int st)
+{
+    static char text[256];
+    unsigned short len = 0;
+    unsigned char out[4];
+    struct dsc$descriptor_s d;
+    d.dsc$w_length = (unsigned short)(sizeof text - 1);
+    d.dsc$b_dtype = DSC$K_DTYPE_T;
+    d.dsc$b_class = DSC$K_CLASS_S;
+    d.dsc$a_pointer = text;
+    if (!(sys$getmsg(st, &len, &d, 15, out) & 1) || len == 0)
+        snprintf(text, sizeof text, "status %%X%08X", st);
+    else
+        text[len < sizeof text ? len : sizeof text - 1] = 0;
+    return text;
+}
+
 static void queues(struct ha_sample *s)
 {
-    static int warned;
+    static int warned, unread;
     static char star[] = "*";
     struct qiosb iosb;
     unsigned int flags = QUI$M_SEARCH_WILDCARD;
@@ -835,9 +854,19 @@ static void queues(struct ha_sample *s)
             q->executing = (int)executing;
         }
     }
-    if (st != JBC$_NOMOREQUE && st != JBC$_NOSUCHQUE && !warned) {
-        warned = 1;
-        say(HA_LOG_WARN, "$GETQUI: status %%X%08X", (unsigned)st);
+    if (!(st & 1) && st != JBC$_NOMOREQUE && st != JBC$_NOSUCHQUE) {
+        /* Not "no queues": the queue manager did not answer, as when SHUTDOWN.COM
+           has stopped it (JBC$_JOBQUEDIS). The core keeps the last queues. */
+        s->nqueue = 0;
+        s->queues_unread = 1;
+        if (!unread) {
+            unread = 1;
+            say(HA_LOG_WARN, "$GETQUI: %s; queue sensors keep their last state "
+                "until it answers", status_text((unsigned)st));
+        }
+    } else if (unread) {
+        unread = 0;
+        say(HA_LOG_INFO, "$GETQUI answers again: queue sensors are current");
     }
     sys$getquiw(EFN$C_ENF, QUI$_CANCEL_OPERATION, 0, 0, (void *)&iosb, 0, 0);
 }

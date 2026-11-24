@@ -864,6 +864,35 @@ static void test_agent(void)
     c = find(&seen, "homeassistant/device/n_1/config");
     CHECK(c == 0 && seen.n == 2);
 
+    /* a queue appears: discovery again. Then the queue manager stops answering, as
+       SHUTDOWN.COM leaves it before SYSHUTDWN.COM stops the agent: the queue keeps
+       its sensors and last state -- only the state is published, no discovery */
+    smp.nqueue = 1;
+    memset(&smp.queue[0], 0, sizeof smp.queue[0]);
+    strcpy(smp.queue[0].name, "SYS$BATCH");
+    smp.queue[0].status = HA_Q_IDLE;
+    t += 30000;
+    CHECK(ha_agent_sample(&a, &smp, t));
+    drain(ha_agent_out(&a), &seen);
+    CHECK(find(&seen, "homeassistant/device/n_1/config") == 0 && seen.n == 2);
+    smp.nqueue = 0;
+    smp.queues_unread = 1;
+    t += 30000;
+    CHECK(ha_agent_sample(&a, &smp, t));
+    drain(ha_agent_out(&a), &seen);
+    CHECK(seen.n == 1 && find(&seen, "openvms/n_1/state") == 0);
+    CHECK(a.cur.nqueue == 1 && a.cur.queue[0].status == HA_Q_IDLE &&
+          strcmp(a.cur.queue[0].name, "SYS$BATCH") == 0);
+    t += 30000;                             /* and again: still kept */
+    CHECK(ha_agent_sample(&a, &smp, t));
+    drain(ha_agent_out(&a), &seen);
+    CHECK(seen.n == 1 && find(&seen, "openvms/n_1/state") == 0);
+    smp.queues_unread = 0;                  /* it answers: no queues means none */
+    t += 30000;
+    CHECK(ha_agent_sample(&a, &smp, t));
+    drain(ha_agent_out(&a), &seen);
+    CHECK(find(&seen, "homeassistant/device/n_1/config") == 0 && seen.n == 2);
+
     /* orderly stop: "offline" (retained), then DISCONNECT */
     ha_agent_stop(&a, t);
     drain(ha_agent_out(&a), &seen);

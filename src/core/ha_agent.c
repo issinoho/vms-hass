@@ -211,6 +211,14 @@ int ha_agent_sample(ha_agent *a, const struct ha_sample *s, ha_u64 now)
         a->prev_at = a->cur_at;
     }
     a->cur = *s;
+    /* Queues unreadable is not "no queues". SHUTDOWN.COM stops the queue manager
+       before it runs SYSHUTDWN.COM, where the agent is stopped, so a sample between
+       the two found none and republished discovery without them (a tester's x86
+       node, twice). Keep the last set and states; the first sample has none. */
+    if (s->queues_unread && a->nsamples) {
+        a->cur.nqueue = a->prev.nqueue;
+        memcpy(a->cur.queue, a->prev.queue, sizeof a->cur.queue);
+    }
     for (i = k = 0; i < a->cur.nqueue && i < HA_MAX_QUEUE; i++)
         if (ha_agent_queue_wanted(a->cfg.queues, a->cur.queue[i].name))
             a->cur.queue[k++] = a->cur.queue[i];

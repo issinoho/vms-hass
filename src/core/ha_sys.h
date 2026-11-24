@@ -101,6 +101,8 @@ struct ha_sample {
     struct ha_shadow shadow[HA_MAX_SHADOW];
     int nqueue;
     struct ha_queue queue[HA_MAX_QUEUE];
+    int queues_unread;                  /* the queue manager could not be asked: keep
+                                           the last queues, not "none" */
     struct ha_cluster cluster;
 };
 
