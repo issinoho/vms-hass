@@ -421,3 +421,36 @@ vms-site-config's `tools/vax.py` (as vms-zlib and vms-bzip2 were), not vms.sh.
   node unavailable at 21:47:54, a second after its last reading: the broker's last
   will, as the simulator's sockets closed (as NOTES 3 saw with kill -9).
 - The job left no duplicate: one HASS_AGENT entry, executing.
+
+## 20. An outside field test of 0.1.2 (17-24 Nov 2026), and what it changed (D12)
+
+A tester ran the released 0.1.2 x86-64 kit on three nodes (E9.2-4 and V9.2-3,
+under VMware ESXi and directly on KVM) for a week, as its own account with NETMBX
+and TMPMBX, on plain MQTT and then TLS: no memory growth, one TLS session held all
+day, a clean stop through SHUTDOWN.COM and start from SYSTARTUP, and refused
+certificates (unknown CA, wrong address, expired, not yet valid) with nothing sent.
+What needed a change, with their evidence:
+
+- **SSL3:** one node had SSL3 V3.0-18; the agent asks `SSL3$LIBSSL_SHR32
+  (LESS/EQUAL, 3., 21.)`, so it would have failed with `-SYSTEM-F-SHRIDMISMAT`, and
+  nothing said which SSL3 the kit needs. Fixed (D12).
+- **Queues withdrawn at shutdown:** twice, about 10 s before the stop,
+  `WARN $GETQUI: status %X0004807A` (= `%JBC-E-JOBQUEDIS, system job queue manager
+  is not running`), then `published discovery: 30 sensors, some removed`, then
+  `stop requested`. SHUTDOWN.COM stops the queues (`$stop/queues/on_node`, its line
+  634 on V9.2-3) before it runs SYSHUTDWN.COM (line 710). Seen on one node, not on
+  the two others the same day: it needs a sample to fall in those seconds. Fixed
+  (D12); `make test` has the case, and fails without the fix (confirmed). The
+  message text was checked on x86 (2026-11-24) with the same `$GETMSG` call in a
+  scratch program: `%JBC-E-JOBQUEDIS, system job queue manager is not running`.
+  The queue manager was not stopped here to see the agent's own line.
+- **HASS$CONFIGURE** printed `%SEARCH-I-NULLFILE` and `%SEARCH-I-NOMATCHES` when
+  the group was free (an empty AUTHORIZE listing). Silenced; on x86 the check gives
+  `$SEVERITY` 3 for an empty file and 1 for a match, as before.
+- **Processes one fewer than SHOW SYSTEM:** 23 against 24, 24 against 25 on the
+  tester's two ESXi nodes, `--print` lying between two F$PID counts. On the Alpha
+  (2026-11-24), vmsotel's `probe_rmi` read `RMI$_PROCS 31` then `32` with an F$PID
+  count of 31 beside it, which lists SWAPPER: not one fewer there. Documented.
+- **Booted** is `SYI$_BOOTTIME`: 2 h early at each of three cold boots on a node
+  whose clock came up 2 h slow until NTP stepped it, and 31.5 h early after a
+  `SET TIME` forward; right after a boot with the clock right. Documented.

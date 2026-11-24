@@ -57,7 +57,17 @@ The problem sensors are ready for Home Assistant alerts and automations. A node 
 stops reporting goes `unavailable` within one keepalive period (the MQTT last will),
 and the device comes back by itself after a restart of the agent, the broker or Home
 Assistant. Disks, LAN devices, queues and shadow sets that come or go are added to or
-removed from the device as they do.
+removed from the device as they do. While the queue manager does not answer -- as at
+shutdown, where `SHUTDOWN.COM` stops it before `SYSHUTDWN.COM` stops the agent -- the
+queue sensors keep their last state instead of being removed.
+
+Two of the system sensors are what VMS records, not what `SHOW SYSTEM` prints:
+
+- **Booted** is `SYI$_BOOTTIME`, written by the clock at boot. If the clock was wrong
+  then and set right later (by NTP, or `SET TIME`), Booted is off by that correction
+  until the next boot; `SHOW SYSTEM`'s Uptime counts running time, and is not.
+- **Processes** is `$GETRMI`'s process count. On x86-64 and Integrity it has been one
+  fewer than the processes `SHOW SYSTEM` lists; on Alpha it was not.
 
 ## Safety
 
@@ -75,7 +85,9 @@ removed from the device as they do.
 
 ## Installing
 
-The kits need TCP/IP Services, VSI's SSL3 kit (not on VAX), and an MQTT broker that Home
+The kits need TCP/IP Services, VSI's SSL3 kit (not on VAX) no older than the one the kit
+was built against -- V3.0-22 from 0.1.3; the kit says so, and PRODUCT INSTALL refuses an
+older one (0.1.2's x86 kit needed V3.0-21 and did not say) -- and an MQTT broker that Home
 Assistant uses (for example the Mosquitto app and the MQTT integration). A kit
 downloaded through a non-VMS system loses its record format. As SYSTEM, restore it and
 install:

@@ -232,3 +232,32 @@ Alternatives: 32-bit values with wrap-safe arithmetic on VAX (more changes to th
 core's behaviour, harder to test against the other platforms); a two-longword
 struct with helper functions everywhere (exact, but touches every arithmetic site on
 all platforms and makes the core harder to read).
+
+## D12. Field-test fixes for 0.1.3: queues kept at shutdown, SSL3 named
+
+**Status:** asked for by the user (2026-11-24), after an outside tester's week of
+0.1.2 on three x86-64 nodes (NOTES.md 20).
+
+- **Unreadable queues are not "no queues".** `$GETQUI` failing with anything but
+  `JBC$_NOMOREQUE` or `JBC$_NOSUCHQUE` -- `JBC$_JOBQUEDIS` at shutdown, where
+  SHUTDOWN.COM stops the queue manager before SYSHUTDWN.COM stops the agent -- now
+  sets `queues_unread` in the sample, and the core keeps the previous sample's
+  queues and their states. So discovery does not change in the last seconds before
+  "offline". The states are kept, not marked unavailable: marking them would turn
+  on every queue's problem sensor at each shutdown, an alert for nothing. The cost
+  is a stale queue state while the queue manager is down for longer; the log says
+  so once (`queue sensors keep their last state until it answers`) and again when
+  it answers. A first sample with no answer has no previous queues, and reports
+  none, as before. The warning gives the message text (`$GETMSG`), not the number.
+- **The kit names its SSL3.** `tools/kit.sh` reads the node's
+  `SSL3$LIBSSL_SHR32` ident ("SSL 3.0-22": the image the agent is then linked
+  against, minor id 22) and the description asks for `SSL3 version minimum` that
+  version, so PRODUCT INSTALL refuses an older SSL3 instead of the agent failing
+  to activate with SHRIDMISMAT. README.VMS gets one requirements line for its own
+  architecture (`@REQUIRES@`). vmsotel's kit does the same, and there PCSI was
+  seen refusing a minimum above the installed SSL3 (vmsotel findings T1).
+- **Processes and Booted are documented, not changed.** Processes is
+  `RMI$_PROCS`. It is one fewer than SHOW SYSTEM on x86-64 (the tester's nodes;
+  vmsotel's probes) and Integrity (vmsotel's probes), but was not on the Alpha
+  (NOTES.md 20), so adding one would be wrong somewhere. Booted is `SYI$_BOOTTIME`,
+  and there is no unprivileged tick count to derive it from instead.
