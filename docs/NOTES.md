@@ -454,3 +454,20 @@ What needed a change, with their evidence:
 - **Booted** is `SYI$_BOOTTIME`: 2 h early at each of three cold boots on a node
   whose clock came up 2 h slow until NTP stepped it, and 31.5 h early after a
   `SET TIME` forward; right after a boot with the clock right. Documented.
+
+## 21. The 0.1.3 release kits (2026-11-24)
+
+- `tools/kit.sh` built the x86, Alpha and VAX kits after 336 native checks on each
+  node; the descriptions say `software VSI X86VMS SSL3 version minimum V3.0-22 ;`
+  and the same for AXPVMS (VAX has none). IA64 was unreachable all day, so its
+  0.1.3 kit is not built.
+- `probes/upgrade_test.com` (batch) on x86 and Alpha, over 0.1.2:
+  `%PCSI-I-FORCEDUPG, product ISSINOHO X86VMS HASS V0.1-2 implicitly removed`
+  (AXPVMS the same), `HASS$CONTROL RESTART`, `HASS_AGENT is running … user HASS`,
+  `hass_agent 0.1.3`, node IDs unchanged. On VAX, `probes/vax_reinstall.com`:
+  removal deassigned HASS$ROOT and HASS$USER and stopped the agent; the install and
+  `HASS$STARTUP` brought it back as HASS, `hass_agent 0.1.3`, the same node ID.
+- HA: still four MQTT devices, no new ones; each node's Processes sensor updated
+  within a minute of its restart (x86 23:46:50, Alpha 23:48:16, VAX 23:49:23 UTC).
+- The agent log read as empty straight after the restart, as the tester saw: the
+  C run-time buffers it. Not changed.

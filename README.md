@@ -24,13 +24,15 @@ Part of the same family as [vmsotel](https://github.com/issinoho/vmsotel),
 [the beszel agent](https://github.com/issinoho/vms-beszel), [VTOP](https://github.com/issinoho/vms-vtop)
 and the other [ports and tools for OpenVMS](https://openvms.issinoho.com).
 
-**Status: 0.1.2, an early test release.** It runs on four test nodes (x86-64 E9.2-4,
+**Status: 0.1.3, an early test release.** It runs on four test nodes (x86-64 E9.2-4,
 IA64 V8.4-2L3, Alpha V8.4-2L2 and VAX V7.3), installed from the kit and publishing to
 Home Assistant: x86-64 and IA64 since 26 October 2026, Alpha since 9 November and VAX
-since 10 November 2026. A real reboot has started the agent by itself on VAX; not yet
-seen: the same on the other three, a clean stop through `SHUTDOWN.COM`, and TLS
-against a real broker (tested on Linux only). See [docs/PLAN.md](docs/PLAN.md) and
-[docs/PHASE4.md](docs/PHASE4.md).
+since 10 November 2026. An outside tester ran 0.1.2 for a week on three more x86-64
+nodes (E9.2-4 and V9.2-3, under VMware ESXi and KVM): a start from `SYSTARTUP_VMS.COM`
+and a clean stop through `SHUTDOWN.COM` on each, and a day on TLS to a real Mosquitto
+broker in a single session; 0.1.3 fixes what they found ([docs/NOTES.md](docs/NOTES.md) 20).
+A real reboot has started the agent on VAX too. Not yet seen: a boot start on IA64 and
+Alpha. See [docs/PLAN.md](docs/PLAN.md) and [docs/PHASE4.md](docs/PHASE4.md).
 
 **On VAX** (OpenVMS V7.3, Compaq C 6.4, TCP/IP Services V5.1) there is no OpenSSL, so
 the agent speaks plain MQTT only, and V7.3 can't start a process as another account, so
@@ -92,7 +94,7 @@ Assistant uses (for example the Mosquitto app and the MQTT integration). A kit
 downloaded through a non-VMS system loses its record format. As SYSTEM, restore it and
 install:
 
-    $ SET FILE/ATTRIBUTE=(RFM:FIX,LRL:8192,MRS:8192,RAT:NONE) ISSINOHO-*-HASS-V0001-2-1.PCSI
+    $ SET FILE/ATTRIBUTE=(RFM:FIX,LRL:8192,MRS:8192,RAT:NONE) ISSINOHO-*-HASS-V0001-3-1.PCSI
     $ PRODUCT INSTALL HASS /PRODUCER=ISSINOHO /SOURCE=dev:[dir]
 
 Then:
