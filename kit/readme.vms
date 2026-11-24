@@ -10,11 +10,8 @@ disk errors) are ready for alerts.  The agent connects out to the broker;
 nothing listens on this system.  It runs as its own unprivileged account
 (NETMBX and TMPMBX only) and refuses to run as SYSTEM or with privileges.
 
-Requires: OpenVMS x86-64 (tested on E9.2-4), Integrity (tested on V8.4-2L3)
-or Alpha (tested on V8.4-2L2) with VSI TCP/IP Services and VSI's SSL3 kit;
-or OpenVMS VAX (tested on V7.3) with TCP/IP Services; and an MQTT broker
-that Home Assistant uses (for example HA's Mosquitto app and MQTT
-integration).
+Requires: @REQUIRES@, and an MQTT broker that Home Assistant uses (for
+example HA's Mosquitto app and MQTT integration).
 
 On VAX: there is no OpenSSL, so the agent speaks plain MQTT only (MQTT_TLS
 must stay off).  OpenVMS V7.3 can't start a process as another account, so

@@ -16,6 +16,18 @@ pcsiversion=$(sed -n 's/^#define HA_PCSI_VERSION *"\(.*\)"/\1/p' "$top/src/core/
 read -r _ ARCH _ _ _ _ _ < <(awk -v n="$node" '$1==n' "$top/tools/nodes.conf")
 case ${ARCH^^} in X86*) base=X86VMS; archname=x86-64 ;; ALPHA*|AXP*) base=AXPVMS; archname=Alpha ;;
     IA64*|I64*) base=I64VMS; archname=Integrity ;; VAX) base=VMS; archname=VAX ;; *) echo "kit: unknown architecture '$ARCH' in tools/nodes.conf" >&2; exit 1 ;; esac
+# The SSL3 the agent will be linked against, from the node's own image ("SSL
+# 3.0-22" is minor id 22): the kit asks PCSI for it or later. Without it the kit
+# installed on an older SSL3 and the agent then failed to activate (SHRIDMISMAT;
+# a tester's x86 node with V3.0-18). VAX has no SSL3.
+if [ "$base" = VMS ]; then
+    ssl3=""; requires="OpenVMS VAX with TCP/IP Services"
+else
+    ssl3=$("$top/tools/vms.sh" "$node" dcl 'analyze/image/select=ident sys$share:ssl3$libssl_shr32.exe' |
+           tr -d '\r' | sed -n 's/.*"SSL \(3\.[0-9]*-[0-9]*\)".*/V\1/p' | head -1)
+    [ -n "$ssl3" ] || { echo "kit: cannot read SSL3\$LIBSSL_SHR32's ident on $node" >&2; exit 1; }
+    requires="OpenVMS $archname with VSI TCP/IP Services and VSI SSL3 $ssl3 or later"
+fi
 # One kit at a time: every build shares out/kitstage.
 mkdir -p "$top/out"; exec 9> "$top/out/.kit.lock"
 flock -n 9 || { echo "kit: another kit.sh is running (out/kitstage is shared)" >&2; exit 1; }
@@ -24,7 +36,8 @@ flock -n 9 || { echo "kit: another kit.sh is running (out/kitstage is shared)" >
 stage=$top/out/kitstage
 rm -rf "$stage"; mkdir -p "$stage" "$top/out/kits"
 subst() { sed -e "s/@PRODUCER@/$KIT_PRODUCER/g" -e "s/@BASE@/$base/g" \
-              -e "s/@PCSIVERSION@/$pcsiversion/g" -e "s/@VERSION@/$version/g" -e "s/@ARCH@/$archname/g"; }
+              -e "s/@PCSIVERSION@/$pcsiversion/g" -e "s/@VERSION@/$version/g" -e "s/@ARCH@/$archname/g" \
+              -e "s/@SSL3MIN@/$ssl3/g" -e "s|@REQUIRES@|$requires|g"; }
 subst < "$top/kit/hass.pcsi\$desc_template" |
     if [ "$base" = VMS ]; then grep -v -- '-- @SSL3@'; else sed 's/ -- @SSL3@$//'; fi \
     > "$stage/PRODUCT-$base.PCSI\$DESC"
@@ -33,7 +46,7 @@ subst < "$top/kit/readme.vms" > "$stage/README.VMS"
 printf 'KIT_PRODUCER=%s\nKIT_PRODUCT=%s\nPCSI_VERSION=%s\nKIT_VERSION=%s\n' \
     "$KIT_PRODUCER" "$KIT_PRODUCT" "$pcsiversion" "$version" > "$stage/KIT.ENV"
 
-echo "kit: vms-hass agent $version ($KIT_PRODUCER $base $KIT_PRODUCT $pcsiversion) on $node"
+echo "kit: vms-hass agent $version ($KIT_PRODUCER $base $KIT_PRODUCT $pcsiversion) on $node${ssl3:+, needs SSL3 $ssl3}"
 if [ "$base" = VMS ]; then
     # the VAX has no SSH: the same steps over Telnet/FTP (tools/vax.sh, D11)
     v=$top/tools/vax.sh

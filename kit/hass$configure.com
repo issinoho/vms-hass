@@ -125,6 +125,11 @@ $ define/user sys$output 'work'
 $ define/user sys$error 'work'
 $ define/user sysuaf 'uaf'
 $ mcr authorize show/brief ['g',*]
+$ ! With a free group the file is empty, and SEARCH says so on the terminal
+$ ! (%SEARCH-I-NULLFILE, -I-NOMATCHES; a tester's x86 node): /NOOUTPUT stops
+$ ! the matches, not its messages. Its $SEVERITY is what is wanted.
+$ define/user sys$output nl:
+$ define/user sys$error nl:
 $ search/nooutput/exact 'work' "[''g',"
 $ ingroup = $severity .eq. 1
 $ if ingroup
